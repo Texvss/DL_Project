@@ -150,26 +150,26 @@ if __name__ == '__main__':
         'dev_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt',
         'eval_dir': 'data/processed/eval',
         'eval_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt',
-        'batch_size': 32,
+        'batch_size': 16,
     }
     model_cfg = {
-        'input_channels':1,
-        'channels_list':[96,192,384,256],
-        'kernel_sizes':[9,5,5,4],
-        'steps':[1,1,1,1],
-        'kernel_pool':2,
-        'step_pool':2,
-        'dropout':0.3,
-        'FLayer_size':512,
-        'n_classes':2
+        'input_channels': 1,
+        'channels_list': [96,192,384,256],
+        'kernel_sizes': [9,5,5,4],
+        'steps': [1,1,1,1],
+        'kernel_pool': 2,
+        'step_pool': 2,
+        'dropout': 0.3,
+        'FLayer_size': 512,
+        'n_classes': 2
     }
     run_cfg = {
-        'lr':               1e-4,
-        'epochs':           20,
-        'checkpoint_path': 'best_lcnn4.pt',
-        'device':          'cuda',
-        'comet_api_key':   "YTEBlOIr52k3Tuyoh3G18TYVX",
-        'comet_project':   "spoof-recognition-public",
+        'lr': 3e-4,
+        'epochs': 20,
+        'checkpoint_path':'best_lcnn4.pt',
+        'device': 'cuda',
+        'comet_api_key': "YTEBlOIr52k3Tuyoh3G18TYVX",
+        'comet_project': "spoof-recognition-public",
         'comet_workspace': None,
     }
 
