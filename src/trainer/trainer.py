@@ -15,8 +15,7 @@ class Trainer:
     def __init__(self, train_config: dict, model_config: dict, run_config: dict):
         self.experiment = Experiment(
             api_key      = run_config.get("comet_api_key"),
-            project_name = run_config.get("comet_project", "asvspoof-lcnn4"),
-            workspace    = run_config.get("comet_workspace", None)
+            project_name = run_config.get("comet_project", "spoof-recognition-public4")
         )
         self.experiment.log_parameters({**train_config, **model_config, **run_config})
 
@@ -135,8 +134,8 @@ if __name__ == '__main__':
         'epochs':          20,
         'checkpoint_path':'best_lcnn4.pt',
         'device':         'cuda',
-        'comet_api_key':   os.environ["COMET_API_KEY"],
-        'comet_project':  "asvspoof-lcnn4",
+        'comet_api_key':   os.environ["YTEBlOIr52k3Tuyoh3G18TYVX"],
+        'comet_project':  "spoof-recognition-public",
     }
 
     trainer = Trainer(train_cfg, model_cfg, run_cfg)
