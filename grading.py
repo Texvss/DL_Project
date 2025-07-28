@@ -3,7 +3,7 @@ import csv
 import numpy as np
 from copy import deepcopy
 
-from calculate_eer import compute_eer
+from src.metrics.calculate_eer import compute_eer
 
 # --- Paths ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -6,11 +6,11 @@ def collate_fn(batch: list[dict]):
 
     padded = []
     for item in batch:
-        feat = item["features"]
-        pad_amount = max_time - feat.shape[-1]
+        features = item["features"]
+        pad_amount = max_time - features.shape[-1]
         if pad_amount > 0:
-            feat = torch.nn.functional.pad(feat, (0, pad_amount), value=0.0)
-        padded.append(feat)
+            features = torch.nn.functional.pad(features, (0, pad_amount), value=0.0)
+        padded.append(features)
         features_batch = torch.stack(padded, dim=0)
 
         result_batch = {"features": features_batch}

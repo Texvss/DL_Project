@@ -5,9 +5,9 @@ import numpy as np
 from torch.utils.data import DataLoader
 from comet_ml import Experiment
 
-from src.datasets.asvspoof import ASVSpoofDataset
-from src.datasets.collate import collate_fn
-from src.model.lcnn import LCNNModel4
+from src.datasets.asvspoof     import ASVSpoofDataset
+from src.datasets.collate      import collate_fn
+from src.model.lcnn            import LCNNModel4
 from src.metrics.calculate_eer import compute_eer
 
 
@@ -20,9 +20,9 @@ class Trainer:
         )
         self.experiment.log_parameters({**train_config, **model_config, **run_config})
 
-        self.device = torch.device(run_config.get(
-            "device", "cuda" if torch.cuda.is_available() else "cpu"
-        ))
+        self.device = torch.device(
+            run_config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+        )
 
         self.model = LCNNModel4(
             input_channels=model_config['input_channels'],
@@ -41,22 +41,34 @@ class Trainer:
 
         bs = train_config['batch_size']
         self.train_loader = DataLoader(
-            ASVSpoofDataset(train_config['train_dir'], train_config['train_protocol'], 'train'),
+            ASVSpoofDataset(
+                train_config['train_dir'],
+                train_config['train_protocol'],
+                'train'
+            ),
             batch_size=bs, shuffle=True,  collate_fn=collate_fn,
             pin_memory=True, num_workers=4
         )
         self.dev_loader = DataLoader(
-            ASVSpoofDataset(train_config['dev_dir'], train_config['dev_protocol'], 'dev'),
+            ASVSpoofDataset(
+                train_config['dev_dir'],
+                train_config['dev_protocol'],
+                'dev'
+            ),
             batch_size=bs, shuffle=False, collate_fn=collate_fn,
             pin_memory=True, num_workers=4
         )
         self.eval_loader = DataLoader(
-            ASVSpoofDataset(train_config['eval_dir'], train_config['eval_protocol'], 'eval'),
+            ASVSpoofDataset(
+                train_config['eval_dir'],
+                train_config['eval_protocol'],
+                'eval'
+            ),
             batch_size=bs, shuffle=False, collate_fn=collate_fn,
             pin_memory=True, num_workers=4
         )
 
-        self.epochs = run_config['epochs']
+        self.epochs          = run_config['epochs']
         self.checkpoint_path = run_config['checkpoint_path']
 
 
@@ -74,7 +86,6 @@ class Trainer:
             loss.backward()
 
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
-
             self.optimizer.step()
 
             total_loss += loss.item() * feats.size(0)
@@ -138,24 +149,28 @@ if __name__ == '__main__':
         'dev_protocol':  'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt',
         'eval_dir':       'data/processed/eval',
         'eval_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt',
-        'batch_size': 64,
+        'batch_size':     64,
     }
     model_cfg = {
-        'input_channels':1,      'channels_list':[96,192,384,256],
-        'kernel_sizes':[9,5,5,4],'steps':[1,1,1,1],
-        'kernel_pool':2,         'step_pool':2,
-        'dropout':0.3,           'FLayer_size':512,
+        'input_channels':1,
+        'channels_list':[96,192,384,256],
+        'kernel_sizes':[9,5,5,4],
+        'steps':[1,1,1,1],
+        'kernel_pool':2,
+        'step_pool':2,
+        'dropout':0.3,
+        'FLayer_size':512,
         'n_classes':2
     }
     run_cfg = {
-        'lr': 1e-4,
-        'epochs': 20,
-        'checkpoint_path':'best_lcnn4.pt',
-        'device': 'cuda',
-        'comet_api_key': os.environ["YTEBlOIr52k3Tuyoh3G18TYVX"],
-        'comet_project': "spoof-recognition-public",
-        'comet_workspace': None
+        'lr':               1e-4,
+        'epochs':           20,
+        'checkpoint_path': 'best_lcnn4.pt',
+        'device':          'cuda',
+        'comet_api_key':   "YTEBlOIr52k3Tuyoh3G18TYVX",
+        'comet_project':   "spoof-recognition-public",
+        'comet_workspace': None,
     }
-    
+
     trainer = Trainer(train_cfg, model_cfg, run_cfg)
     trainer.run()
