@@ -8,6 +8,7 @@ from src.datasets.collate import collate_fn
 from src.model.lcnn import LCNNModel4
 from src.metrics.calculate_eer import compute_eer
 
+
 class Trainer:
 
     def __init__(
@@ -20,7 +21,6 @@ class Trainer:
             run_config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
         )
 
-        # модель
         self.model = LCNNModel4(
             input_channels=model_config['input_channels'],
             channels_list=model_config['channels_list'],
@@ -77,7 +77,10 @@ class Trainer:
     def train_one_epoch(self) -> float:
         self.model.train()
         total_loss = 0.0
-        for batch in self.train_loader:
+        num_batches = len(self.train_loader)
+        print(f"[Train] Starting epoch on device {self.device}, {num_batches} batches")
+
+        for batch_idx, batch in enumerate(self.train_loader, start=1):
             features = batch['features'].to(self.device)
             labels   = batch['labels'].to(self.device)
 
@@ -89,7 +92,13 @@ class Trainer:
 
             total_loss += loss.item() * features.size(0)
 
-        return total_loss / len(self.train_loader.dataset)
+            if batch_idx % 10 == 0 or batch_idx == num_batches:
+                print(f"[Train] Batch {batch_idx}/{num_batches}  loss={loss.item():.4f}")
+
+        avg_loss = total_loss / len(self.train_loader.dataset)
+        print(f"[Train] Epoch finished  avg_loss={avg_loss:.4f}")
+        return avg_loss
+
 
     def validate(self, loader: DataLoader) -> tuple[float, float]:
         self.model.eval()
