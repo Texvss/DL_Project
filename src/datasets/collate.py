@@ -11,16 +11,16 @@ def collate_fn(batch: list[dict]):
         if pad_amount > 0:
             features = torch.nn.functional.pad(features, (0, pad_amount), value=0.0)
         padded.append(features)
-        features_batch = torch.stack(padded, dim=0)
 
-        result_batch = {"features": features_batch}
+    features_batch = torch.stack(padded, dim=0)
+    result_batch = {"features": features_batch}
 
-        if "labels" in batch[0]:
-            labels = torch.tensor([item["labels"] for item in batch], dtype=torch.long)
-            result_batch["labels"] = labels
+    if "labels" in batch[0]:
+        labels = torch.tensor([item["labels"] for item in batch], dtype=torch.long)
+        result_batch["labels"] = labels
 
-        if "utt_id" in batch[0]:
-            utt_id = [[item["utt_id"] for item in batch]]
-            result_batch["utt_id"] = utt_id
-    
+    if "utt_id" in batch[0]:
+        utt_ids = [item["utt_id"] for item in batch]
+        result_batch["utt_id"] = utt_ids
+
     return result_batch

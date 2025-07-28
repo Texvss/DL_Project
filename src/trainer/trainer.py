@@ -1,13 +1,14 @@
+from comet_ml import Experiment
+
 import os
 import torch
 import numpy as np
 
 from torch.utils.data import DataLoader
-from comet_ml import Experiment
 
-from src.datasets.asvspoof     import ASVSpoofDataset
-from src.datasets.collate      import collate_fn
-from src.model.lcnn            import LCNNModel4
+from src.datasets.asvspoof import ASVSpoofDataset
+from src.datasets.collate import collate_fn
+from src.model.lcnn import LCNNModel4
 from src.metrics.calculate_eer import compute_eer
 
 
@@ -27,13 +28,13 @@ class Trainer:
         self.model = LCNNModel4(
             input_channels=model_config['input_channels'],
             channels_list = model_config['channels_list'],
-            kernel_sizes  = model_config['kernel_sizes'],
-            steps         = model_config['steps'],
-            kernel_pool   = model_config['kernel_pool'],
-            step_pool     = model_config['step_pool'],
-            dropout       = model_config['dropout'],
-            FLayer_size   = model_config['FLayer_size'],
-            n_classes     = model_config['n_classes']
+            kernel_sizes = model_config['kernel_sizes'],
+            steps = model_config['steps'],
+            kernel_pool = model_config['kernel_pool'],
+            step_pool = model_config['step_pool'],
+            dropout = model_config['dropout'],
+            FLayer_size = model_config['FLayer_size'],
+            n_classes = model_config['n_classes']
         ).to(self.device)
 
         self.loss      = torch.nn.CrossEntropyLoss()
@@ -68,7 +69,7 @@ class Trainer:
             pin_memory=True, num_workers=4
         )
 
-        self.epochs          = run_config['epochs']
+        self.epochs = run_config['epochs']
         self.checkpoint_path = run_config['checkpoint_path']
 
 
@@ -143,13 +144,13 @@ class Trainer:
 
 if __name__ == '__main__':
     train_cfg = {
-        'train_dir':      'data/processed/train',
+        'train_dir': 'data/processed/train',
         'train_protocol':'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt',
-        'dev_dir':        'data/processed/dev',
-        'dev_protocol':  'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt',
-        'eval_dir':       'data/processed/eval',
+        'dev_dir': 'data/processed/dev',
+        'dev_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt',
+        'eval_dir': 'data/processed/eval',
         'eval_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt',
-        'batch_size':     64,
+        'batch_size': 64,
     }
     model_cfg = {
         'input_channels':1,
