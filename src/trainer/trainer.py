@@ -150,7 +150,7 @@ if __name__ == '__main__':
         'dev_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt',
         'eval_dir': 'data/processed/eval',
         'eval_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt',
-        'batch_size': 64,
+        'batch_size': 32,
     }
     model_cfg = {
         'input_channels':1,
