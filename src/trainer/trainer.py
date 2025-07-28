@@ -76,8 +76,10 @@ class Trainer:
     def train_one_epoch(self, epoch: int) -> float:
         self.model.train()
         total_loss = 0.0
+        num_batches = len(self.train_loader)
 
-        for batch in self.train_loader:
+        print(f"\n[Epoch {epoch}] training on {num_batches} batches…")
+        for batch_idx, batch in enumerate(self.train_loader, 1):
             feats  = batch['features'].to(self.device)
             labels = batch['labels'].to(self.device)
 
@@ -91,9 +93,15 @@ class Trainer:
 
             total_loss += loss.item() * feats.size(0)
 
+            if batch_idx % 10 == 0 or batch_idx == num_batches:
+                print(f"  [Epoch {epoch}] batch {batch_idx}/{num_batches}  loss = {loss.item():.4f}")
+
         avg_loss = total_loss / len(self.train_loader.dataset)
+        print(f"[Epoch {epoch}] finished — avg train loss = {avg_loss:.4f}\n")
+
         self.experiment.log_metric("train_loss", avg_loss, step=epoch)
         return avg_loss
+
 
 
     def validate(self, loader: DataLoader, split: str, epoch: int) -> float:
