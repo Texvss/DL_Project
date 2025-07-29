@@ -144,7 +144,7 @@ class Trainer:
 
         for epoch in range(1, self.epochs + 1):
             train_loss = self.train_one_epoch(epoch)
-            dev_eer, _ = self.validate(self.dev_loader, "dev", epoch)
+            dev_eer = self.validate(self.dev_loader, "dev", epoch)
 
             print(f"Epoch {epoch}: train_loss={train_loss:.4f}, dev_EER={dev_eer*100:.2f}%")
 
@@ -161,7 +161,7 @@ class Trainer:
 
 
             if no_improve >= 3:
-                print("Early stopping: Dev‑EER не улучшается 3 эпохи подряд.")
+                print("Early stopping: Dev-EER не улучшается 3 эпохи подряд.")
                 break
 
 
