@@ -116,22 +116,29 @@ class Trainer:
     def validate(self, loader: DataLoader, split: str, epoch: int) -> float:
         self.model.eval()
         all_labels, all_scores = [], []
+        total_loss = 0.0
+        n_batches = len(loader)
 
         with torch.no_grad():
             for batch in loader:
                 feats  = batch['features'].to(self.device)
-                labels = batch['labels'].cpu().numpy()
+                labels = batch['labels'].to(self.device)
 
-                logits = self.model(feats).cpu().numpy()
-                scores = logits[:, 1]
+                logits = self.model(feats)
+                loss   = self.loss(logits, labels)
+                total_loss += loss.item()
 
-                all_labels.append(labels)
-                all_scores.append(scores)
+                probs  = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
+                all_scores.append(probs)
+                all_labels.append(labels.cpu().numpy())
+
+        val_loss = total_loss / n_batches
+        self.experiment.log_metric(f"{split}_loss", val_loss, step=epoch)
 
         y_true   = np.concatenate(all_labels)
         y_scores = np.concatenate(all_scores)
-        bona   = y_scores[y_true == 0]
-        spoof  = y_scores[y_true == 1]
+        bona  = y_scores[y_true == 0]
+        spoof = y_scores[y_true == 1]
         eer, _ = compute_eer(bona, spoof)
 
         self.experiment.log_metric(f"{split}_EER", eer, step=epoch)
@@ -141,6 +148,7 @@ class Trainer:
     def run(self):
         best_eer = float('inf')
         no_improve = 0
+        target_eer = 0.05 
 
         for epoch in range(1, self.epochs + 1):
             train_loss = self.train_one_epoch(epoch)
@@ -157,14 +165,17 @@ class Trainer:
                 no_improve += 1
 
             self.scheduler.step(dev_eer)
-
+            
+            if best_eer < target_eer:
+                print(f"Target EER<{target_eer*100:.1f}% reached ({best_eer*100:.2f}%).")
+                break
 
             if no_improve >= 3:
-                print("Early stopping: Dev-EER не улучшается 3 эпохи подряд.")
+                print("Early stopping: no improvment for 3 epochs.")
                 break
 
 
-        eval_eer, _ = self.validate(self.eval_loader, "eval", self.epochs)
+        eval_eer = self.validate(self.eval_loader, "eval", epoch)
         print(f"Final eval_EER={eval_eer*100:.2f}%")
         self.experiment.end()
 
