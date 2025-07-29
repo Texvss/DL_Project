@@ -2,57 +2,52 @@ import torch
 from torch import nn
 
 class LCNNModel4(nn.Module):
-
     def __init__(
-            self,
-            input_channels: int,
-            channels_list: list[int],
-            kernel_sizes: list[int],
-            steps: list[int],
-            kernel_pool: int,
-            step_pool: int,
-            dropout: float,
-            FLayer_size: int,
-            n_classes: int
-            ):
+        self,
+        input_channels: int,
+        channels_list: list[int],
+        kernel_sizes: list[int],
+        strides: list[int],
+        pool_kernel: int,
+        pool_stride: int,
+        dropout: float,
+        fc_size: int,
+        n_classes: int
+    ):
         super().__init__()
-
-        self.convs = nn.ModuleList()
-        self.pools = nn.ModuleList()
-        self.dropouts = nn.ModuleList()
-
-        inp_channels = input_channels
-        for i in range(len(channels_list)):
-            output_channels = channels_list[i]
-            kernel_size = kernel_sizes[i]
-            step = steps[i]
-            pad = kernel_size // 2
-            
-            self.convs.append(nn.Conv2d(inp_channels, output_channels, kernel_size=kernel_size, stride=step, padding=pad))
-            self.pools.append(nn.MaxPool2d(kernel_size=kernel_pool, stride=step_pool))
-            self.dropouts.append(nn.Dropout2d(p=dropout))
-            
-            inp_channels = output_channels // 2
-
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((1,1))
-        self.flatten = nn.Flatten()
-        self.Layer1 = nn.Linear(inp_channels, FLayer_size)
-        self.Layer2 = nn.Linear(FLayer_size // 2, n_classes)
-
+        
+        assert len(channels_list) == len(kernel_sizes) == len(strides), \
+            "channels_list, kernel_sizes и strides должны быть одной длины"
+        
+        blocks = []
+        in_ch = input_channels
+        for out_ch, k, s in zip(channels_list, kernel_sizes, strides):
+            pad = k // 2
+            blocks.append(nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=s, padding=pad))
+            blocks.append(nn.BatchNorm2d(out_ch))
+            blocks.append(nn.ReLU(inplace=True))
+            blocks.append(nn.MaxPool2d(kernel_size=pool_kernel, stride=pool_stride))
+            blocks.append(nn.Dropout2d(p=dropout))
+            in_ch = out_ch
+        
+        self.feature_extractor = nn.Sequential(*blocks)
+        
+        self.global_pool = nn.AdaptiveAvgPool2d((1,1))
+        self.flatten     = nn.Flatten()
+        
+        self.fc1 = nn.Linear(in_ch, fc_size)
+        self.bn1 = nn.BatchNorm1d(fc_size)
+        self.fc2 = nn.Linear(fc_size // 2, n_classes)
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        for conv, pool, dropout in zip(self.convs, self.pools, self.dropouts):
-            x = conv(x)
-
-            a, b = x.chunk(chunks=2, dim=1)
-            x = torch.max(a, b)
-            x = pool(x)
-            x = dropout(x)
-        
-        x = self.adaptive_pool(x)
+        x = self.feature_extractor(x)
+        x = self.global_pool(x)
         x = self.flatten(x)
-        x = self.Layer1(x)
-        a, b = x.chunk(chunks=2, dim=1)
+        
+        x = self.fc1(x)
+        x = self.bn1(x)
+        a, b = x.chunk(2, dim=1)
         x = torch.max(a, b)
-        logits = self.Layer2(x)
+        
+        logits = self.fc2(x)
         return logits
