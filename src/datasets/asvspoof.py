@@ -30,7 +30,7 @@ class ASVSpoofDataset(Dataset):
         for path in all_paths:
             utt_id = os.path.basename(path).rsplit(".", 1)[0]
             if utt_id in mapping:
-                self.items.append((path, mapping[ut_id]))
+                self.items.append((path, mapping[utt_id]))
             else:
                 continue
 
