@@ -29,11 +29,10 @@ class ASVSpoofDataset(Dataset):
         self.mode = mode
         for path in all_paths:
             utt_id = os.path.basename(path).rsplit(".", 1)[0]
-            if self.mode in ("train", "dev"):
-                if utt_id in mapping:
-                    self.items.append((path, mapping[utt_id]))
+            if utt_id in mapping:
+                self.items.append((path, mapping[ut_id]))
             else:
-                self.items.append((path, utt_id))
+                continue
 
     
     def __getitem__(self, index):
@@ -42,10 +41,7 @@ class ASVSpoofDataset(Dataset):
         features = torch.from_numpy(features_raw).float()
         if features.ndim == 2:
             features = features.unsqueeze(0)
-        if self.mode in ("train", "dev"):
-            return {"features": features, "labels": value}
-        else:
-            return {"features": features, "utt_id": value}
+        return {"features": features, "labels": value}
         
     def __len__(self):
         return len(self.items)

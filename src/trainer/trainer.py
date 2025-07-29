@@ -38,8 +38,8 @@ class Trainer:
             n_classes = model_config['n_classes']
         ).to(self.device)
 
-        self.loss      = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-4)
+        self.loss = torch.nn.CrossEntropyLoss()
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-5)
 
         self.scheduler = ReduceLROnPlateau(
             self.optimizer,
@@ -140,24 +140,33 @@ class Trainer:
 
     def run(self):
         best_eer = float('inf')
+        no_improve = 0
 
         for epoch in range(1, self.epochs + 1):
             train_loss = self.train_one_epoch(epoch)
-            dev_eer    = self.validate(self.dev_loader, "dev", epoch)
+            dev_eer, _ = self.validate(self.dev_loader, "dev", epoch)
 
-            self.scheduler.step(dev_eer)
+            print(f"Epoch {epoch}: train_loss={train_loss:.4f}, dev_EER={dev_eer*100:.2f}%")
 
-            print(f"Epoch {epoch:2d} → train_loss={train_loss:.4f}, dev_EER={dev_eer*100:.2f}%")
 
             if dev_eer < best_eer:
                 best_eer = dev_eer
+                no_improve = 0
                 torch.save(self.model.state_dict(), self.checkpoint_path)
-                self.experiment.log_model("best_lcnn4", self.checkpoint_path)
-                print(f"  New best model saved (EER={best_eer*100:.2f}%)")
+                print(f"New best model saved (EER={best_eer*100:.2f}%)")
+            else:
+                no_improve += 1
 
-        eval_eer = self.validate(self.eval_loader, "eval", self.epochs)
+            self.scheduler.step(dev_eer)
+
+
+            if no_improve >= 3:
+                print("Early stopping: Dev‑EER не улучшается 3 эпохи подряд.")
+                break
+
+
+        eval_eer, _ = self.validate(self.eval_loader, "eval", self.epochs)
         print(f"Final eval_EER={eval_eer*100:.2f}%")
-
         self.experiment.end()
 
 
