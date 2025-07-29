@@ -1,26 +1,23 @@
 import torch
 
-def collate_fn(batch: list[dict]):
+def collate_fn(batch: list[dict]) -> dict:
     times = [item["features"].shape[-1] for item in batch]
     max_time = max(times)
 
     padded = []
     for item in batch:
-        features = item["features"]
-        pad_amount = max_time - features.shape[-1]
-        if pad_amount > 0:
-            features = torch.nn.functional.pad(features, (0, pad_amount), value=0.0)
-        padded.append(features)
-
+        f = item["features"]
+        pad_amt = max_time - f.shape[-1]
+        if pad_amt > 0:
+            f = torch.nn.functional.pad(f, (0, pad_amt))
+        padded.append(f)
     features_batch = torch.stack(padded, dim=0)
-    result_batch = {"features": features_batch}
+
+    out = {"features": features_batch}
 
     if "labels" in batch[0]:
-        labels = torch.tensor([item["labels"] for item in batch], dtype=torch.long)
-        result_batch["labels"] = labels
-
+        out["labels"] = torch.tensor([item["labels"] for item in batch], dtype=torch.long)
     if "utt_id" in batch[0]:
-        utt_ids = [item["utt_id"] for item in batch]
-        result_batch["utt_id"] = utt_ids
+        out["utt_id"] = [item["utt_id"] for item in batch]
 
-    return result_batch
+    return out

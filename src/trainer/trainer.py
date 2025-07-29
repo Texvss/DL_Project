@@ -148,7 +148,6 @@ class Trainer:
 
             print(f"Epoch {epoch}: train_loss={train_loss:.4f}, dev_EER={dev_eer*100:.2f}%")
 
-
             if dev_eer < best_eer:
                 best_eer = dev_eer
                 no_improve = 0

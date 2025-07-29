@@ -1,12 +1,8 @@
-import logging
-import random
-from typing import List
 import glob
 import os
 
 import numpy as np
 import torch
-import torchaudio
 from torch.utils.data import Dataset
 
 class ASVSpoofDataset(Dataset):
@@ -43,5 +39,17 @@ class ASVSpoofDataset(Dataset):
             features = features.unsqueeze(0)
         return {"features": features, "labels": value}
         
-    def __len__(self):
-        return len(self.items)
+    def __len__(self, index):
+        path, val = self.items[index]
+        arr = np.load(path)
+        feats = torch.from_numpy(arr).float()
+        if feats.ndim == 2:
+            feats = feats.unsqueeze(0)
+
+        if self.mode == "train" and self.transform:
+            feats = self.transform(feats)
+
+        if self.mode in ("train", "dev"):
+            return {"features": feats, "labels": val}
+        else:
+            return {"features": feats, "utt_id": val}
