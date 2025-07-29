@@ -5,6 +5,7 @@ import torch
 import numpy as np
 
 from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from src.datasets.asvspoof import ASVSpoofDataset
 from src.datasets.collate import collate_fn
@@ -38,7 +39,15 @@ class Trainer:
         ).to(self.device)
 
         self.loss      = torch.nn.CrossEntropyLoss()
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'])
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-4)
+
+        self.scheduler = ReduceLROnPlateau(
+            self.optimizer,
+            mode="min",
+            factor=0.5,
+            patience=1,
+            verbose=True
+        )
 
         bs = train_config['batch_size']
         self.train_loader = DataLoader(
@@ -136,6 +145,8 @@ class Trainer:
             train_loss = self.train_one_epoch(epoch)
             dev_eer    = self.validate(self.dev_loader, "dev", epoch)
 
+            self.scheduler.step(dev_eer)
+
             print(f"Epoch {epoch:2d} → train_loss={train_loss:.4f}, dev_EER={dev_eer*100:.2f}%")
 
             if dev_eer < best_eer:
@@ -167,7 +178,7 @@ if __name__ == '__main__':
         'steps': [1,1,1,1],
         'kernel_pool': 2,
         'step_pool': 2,
-        'dropout': 0.3,
+        'dropout': 0.5,
         'FLayer_size': 512,
         'n_classes': 2
     }
