@@ -1,53 +1,74 @@
 import torch
 from torch import nn
 
-class LCNNModel4(nn.Module):
-    def __init__(
-        self,
-        input_channels: int,
-        channels_list: list[int],
-        kernel_sizes: list[int],
-        strides: list[int],
-        pool_kernel: int,
-        pool_stride: int,
-        dropout: float,
-        fc_size: int,
-        n_classes: int
-    ):
+class MFM(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0):
         super().__init__()
-        
-        assert len(channels_list) == len(kernel_sizes) == len(strides), \
-            "channels_list, kernel_sizes и strides должны быть одной длины"
-        
-        blocks = []
-        in_ch = input_channels
-        for out_ch, k, s in zip(channels_list, kernel_sizes, strides):
-            pad = k // 2
-            blocks.append(nn.Conv2d(in_ch, out_ch, kernel_size=k, stride=s, padding=pad))
-            blocks.append(nn.BatchNorm2d(out_ch))
-            blocks.append(nn.ReLU(inplace=True))
-            blocks.append(nn.MaxPool2d(kernel_size=pool_kernel, stride=pool_stride))
-            blocks.append(nn.Dropout2d(p=dropout))
-            in_ch = out_ch
-        
-        self.feature_extractor = nn.Sequential(*blocks)
-        
-        self.global_pool = nn.AdaptiveAvgPool2d((1,1))
-        self.flatten     = nn.Flatten()
-        
-        self.fc1 = nn.Linear(in_ch, fc_size)
-        self.bn1 = nn.BatchNorm1d(fc_size)
-        self.fc2 = nn.Linear(fc_size // 2, n_classes)
-    
+        self.out_channels = out_channels
+        self.conv = nn.Conv2d(in_channels, out_channels * 2, kernel_size, stride, padding)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = self.feature_extractor(x)
-        x = self.global_pool(x)
-        x = self.flatten(x)
-        
+        x = self.conv(x)
+        a, b = torch.split(x, self.out_channels, dim=1)
+        return torch.max(a, b)
+
+class LCNN(nn.Module):
+    TARGET_T = 600
+
+    def __init__(self, num_classes: int = 2):
+        super().__init__()
+        self.layer1 = nn.Sequential(
+            MFM(1, 32, kernel_size=5, stride=1, padding=2),
+            nn.MaxPool2d(kernel_size=2, stride=2)
+        )
+        self.layer2 = nn.Sequential(
+            MFM(32, 32, kernel_size=1),
+            nn.BatchNorm2d(32),
+            MFM(32, 48, kernel_size=3, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.BatchNorm2d(48)
+        )
+        self.layer3 = nn.Sequential(
+            MFM(48, 48, kernel_size=1),
+            nn.BatchNorm2d(48),
+            MFM(48, 64, kernel_size=3, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2)
+        )
+        self.layer4 = nn.Sequential(
+            MFM(64, 64, kernel_size=1),
+            nn.BatchNorm2d(64),
+            MFM(64, 32, kernel_size=3, padding=1),
+            nn.BatchNorm2d(32),
+            MFM(32, 32, kernel_size=1),
+            nn.BatchNorm2d(32),
+            MFM(32, 32, kernel_size=3, padding=1),
+            nn.MaxPool2d(kernel_size=2, stride=2)
+        )
+        self.fc1 = nn.Linear(32 * 53 * 37, 160)
+        self.bn_fc1 = nn.BatchNorm1d(160)
+        self.fc_mfm = nn.Linear(160, 80)
+        self.bn_fc2 = nn.BatchNorm1d(80)
+        self.dropout = nn.Dropout(0.75)
+        self.fc2 = nn.Linear(80, num_classes)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, C, F, T = x.shape
+        if T != self.TARGET_T:
+            if T < self.TARGET_T:
+                x = torch.nn.functional.pad(x, (0, self.TARGET_T - T))
+            else:
+                x = x[:, :, :, :self.TARGET_T]
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.layer4(x)
+        x = x.view(B, -1)
         x = self.fc1(x)
-        x = self.bn1(x)
+        x = self.bn_fc1(x)
         a, b = x.chunk(2, dim=1)
         x = torch.max(a, b)
-        
+        x = self.fc_mfm(x)
+        x = self.bn_fc2(x)
+        x = self.dropout(x)
         logits = self.fc2(x)
         return logits
