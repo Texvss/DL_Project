@@ -1,23 +1,22 @@
-# src/model/lcnn.py
 import torch
 from torch import nn
 
 class MFM(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0):
-        super().__init__()
+        super(MFM, self).__init__()
         self.out_channels = out_channels
         self.conv = nn.Conv2d(in_channels, out_channels * 2, kernel_size, stride, padding)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
         a, b = torch.split(x, self.out_channels, dim=1)
-        return torch.maximum(a, b)
+        return torch.max(a, b)
 
 class LCNN(nn.Module):
     TARGET_T = 600
 
     def __init__(self, num_classes: int = 2):
-        super().__init__()
+        super(LCNN, self).__init__()
         self.layer1 = nn.Sequential(
             MFM(1, 32, kernel_size=5, stride=1, padding=2),
             nn.MaxPool2d(kernel_size=2, stride=2)
@@ -47,7 +46,6 @@ class LCNN(nn.Module):
         )
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.flatten = nn.Flatten()
-        # fully connected
         self.fc1 = nn.Linear(32, 160)
         self.bn_fc1 = nn.BatchNorm1d(160)
         self.bn_fc2 = nn.BatchNorm1d(80)
@@ -70,7 +68,7 @@ class LCNN(nn.Module):
         x = self.fc1(x)
         x = self.bn_fc1(x)
         a, b = x.chunk(2, dim=1)
-        x = torch.maximum(a, b)
+        x = torch.max(a, b)
         x = self.bn_fc2(x)
         x = self.dropout(x)
         logits = self.fc2(x)
