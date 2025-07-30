@@ -11,7 +11,7 @@ class MFM(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
         a, b = torch.split(x, self.out_channels, dim=1)
-        return torch.max(a, b)
+        return torch.maximum(a, b)
 
 class LCNN(nn.Module):
     TARGET_T = 600
@@ -47,9 +47,9 @@ class LCNN(nn.Module):
         )
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.flatten = nn.Flatten()
+        # fully connected
         self.fc1 = nn.Linear(32, 160)
         self.bn_fc1 = nn.BatchNorm1d(160)
-        self.fc_mfm = nn.Linear(160, 80)
         self.bn_fc2 = nn.BatchNorm1d(80)
         self.dropout = nn.Dropout(0.75)
         self.fc2 = nn.Linear(80, num_classes)
@@ -70,8 +70,7 @@ class LCNN(nn.Module):
         x = self.fc1(x)
         x = self.bn_fc1(x)
         a, b = x.chunk(2, dim=1)
-        x = torch.max(a, b)
-        x = self.fc_mfm(x)
+        x = torch.maximum(a, b)
         x = self.bn_fc2(x)
         x = self.dropout(x)
         logits = self.fc2(x)
