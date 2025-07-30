@@ -9,6 +9,8 @@ class MFM(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.conv(x)
+        if x.shape[1] != self.out_channels * 2:
+            raise ValueError(f"Expected {self.out_channels * 2} channels after conv, got {x.shape[1]}")
         a, b = torch.split(x, self.out_channels, dim=1)
         return torch.max(a, b)
 
@@ -46,13 +48,15 @@ class LCNN(nn.Module):
         )
         self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.flatten = nn.Flatten()
-        self.fc1 = nn.Linear(32, 160)
-        self.bn_fc1 = nn.BatchNorm1d(160)
-        self.bn_fc2 = nn.BatchNorm1d(80)
-        self.dropout = nn.Dropout(0.75)
-        self.fc2 = nn.Linear(80, num_classes)
+        self.fc1 = nn.Linear(32, 256)
+        self.bn_fc1 = nn.BatchNorm1d(256)
+        self.bn_fc2 = nn.BatchNorm1d(128)
+        self.dropout = nn.Dropout(0.5)
+        self.fc2 = nn.Linear(128, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if x.shape[1] != 1 or x.shape[2] != 257:
+            raise ValueError(f"Expected input shape (B, 1, 257, T), got {x.shape}")
         B, C, F, T = x.shape
         if T != self.TARGET_T:
             if T < self.TARGET_T:
@@ -67,6 +71,8 @@ class LCNN(nn.Module):
         x = self.flatten(x)
         x = self.fc1(x)
         x = self.bn_fc1(x)
+        if x.shape[1] != 256:
+            raise ValueError(f"Expected 256 features after fc1, got {x.shape[1]}")
         a, b = x.chunk(2, dim=1)
         x = torch.max(a, b)
         x = self.bn_fc2(x)
