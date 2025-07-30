@@ -6,8 +6,8 @@ from collections import Counter
 
 from src.datasets.asvspoof import ASVSpoofDataset
 from src.datasets.collate import collate_fn
-# from src.model.lcnn import LCNN
-# from src.trainer.trainer import Trainer
+from src.model.lcnn import LCNN
+from src.trainer.trainer import Trainer
 
 train_ds = ASVSpoofDataset("data/processed/train", "data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt", "train")
 eval_ds = ASVSpoofDataset("data/processed/eval", "data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt", "eval")
