@@ -45,10 +45,8 @@ class LCNN(nn.Module):
             MFM(32, 32, kernel_size=3, padding=1),
             nn.MaxPool2d(kernel_size=2, stride=2)
         )
-        # global pooling -> flatten
-        self.global_pool = nn.AdaptiveAvgPool2d((1,1))
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.flatten = nn.Flatten()
-        # fully connected layers
         self.fc1 = nn.Linear(32, 160)
         self.bn_fc1 = nn.BatchNorm1d(160)
         self.fc_mfm = nn.Linear(160, 80)
