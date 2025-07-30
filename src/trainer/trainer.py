@@ -9,7 +9,7 @@ from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from src.datasets.asvspoof import ASVSpoofDataset
 from src.datasets.collate import collate_fn
-from src.model.lcnn import LCNNModel4
+from src.model.lcnn import LCNN
 from src.metrics.calculate_eer import compute_eer
 
 

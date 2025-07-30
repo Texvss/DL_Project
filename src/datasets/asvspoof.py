@@ -6,16 +6,11 @@ import torch
 from torch.utils.data import Dataset
 
 class ASVSpoofDataset(Dataset):
-    def __init__(
-        self,
-        processed_dir: str,
-        protocol_path: str,
-        mode: str,
-        transform=None
-    ):
-        self.mode = mode
-        self.transform = transform 
+    TARGET_T = 600
 
+    def __init__(self, processed_dir: str, protocol_path: str, mode: str, transform=None):
+        self.mode = mode
+        self.transform = transform
         all_paths = sorted(glob.glob(os.path.join(processed_dir, "*.npy")))
 
         mapping = {}
@@ -23,8 +18,7 @@ class ASVSpoofDataset(Dataset):
             with open(protocol_path, "r", encoding="utf-8") as f:
                 for line in f:
                     parts = line.strip().split()
-                    utt = parts[1]
-                    mapping[utt] = 0 if parts[-1] == "bonafide" else 1
+                    mapping[parts[1]] = 0 if parts[-1] == "bonafide" else 1
 
         self.items = []
         for path in all_paths:
@@ -44,6 +38,13 @@ class ASVSpoofDataset(Dataset):
         feats = torch.from_numpy(arr).float()
         if feats.ndim == 2:
             feats = feats.unsqueeze(0)
+
+        _, _, t = feats.shape
+        if t < self.TARGET_T:
+            pad_amt = self.TARGET_T - t
+            feats = torch.nn.functional.pad(feats, (0, pad_amt))
+        else:
+            feats = feats[:, :, :self.TARGET_T]
 
         if self.mode == "train" and self.transform:
             feats = self.transform(feats)
