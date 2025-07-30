@@ -4,7 +4,7 @@ import os
 import torch
 import numpy as np
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 
 from src.datasets.asvspoof import ASVSpoofDataset
@@ -14,31 +14,23 @@ from src.metrics.calculate_eer import compute_eer
 
 
 class Trainer:
-    def __init__(self, train_config: dict, model_config: dict, run_config: dict):
+    def __init__(self, train_config: dict, run_config: dict):
         self.experiment = Experiment(
             api_key      = run_config["comet_api_key"],
             project_name = run_config.get("comet_project"),
             workspace    = run_config.get("comet_workspace", None)
         )
-        self.experiment.log_parameters({**train_config, **model_config, **run_config})
+        self.experiment.log_parameters({**train_config, **run_config})
 
         self.device = torch.device(
             run_config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
         )
 
-        self.model = LCNNModel4(
-            input_channels=model_config['input_channels'],
-            channels_list = model_config['channels_list'],
-            kernel_sizes = model_config['kernel_sizes'],
-            steps = model_config['steps'],
-            kernel_pool = model_config['kernel_pool'],
-            step_pool = model_config['step_pool'],
-            dropout = model_config['dropout'],
-            FLayer_size = model_config['FLayer_size'],
-            n_classes = model_config['n_classes']
-        ).to(self.device)
+        self.model = LCNN(num_classes=2).to(self.device)
 
-        self.loss = torch.nn.CrossEntropyLoss()
+        # Loss and optimizer
+        class_weights = self._compute_class_weights(train_config)
+        self.loss = torch.nn.CrossEntropyLoss(weight=class_weights.to(self.device))
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-5)
 
         self.scheduler = ReduceLROnPlateau(
@@ -49,15 +41,21 @@ class Trainer:
             verbose=True
         )
 
+        # Data loaders with balanced sampler for training
         bs = train_config['batch_size']
+        train_ds = ASVSpoofDataset(
+            train_config['train_dir'],
+            train_config['train_protocol'],
+            'train'
+        )
+        sampler = self._create_weighted_sampler(train_ds)
         self.train_loader = DataLoader(
-            ASVSpoofDataset(
-                train_config['train_dir'],
-                train_config['train_protocol'],
-                'train'
-            ),
-            batch_size=bs, shuffle=True,  collate_fn=collate_fn,
-            pin_memory=True, num_workers=4
+            train_ds,
+            batch_size=bs,
+            sampler=sampler,
+            collate_fn=collate_fn,
+            pin_memory=True,
+            num_workers=4
         )
         self.dev_loader = DataLoader(
             ASVSpoofDataset(
@@ -65,8 +63,11 @@ class Trainer:
                 train_config['dev_protocol'],
                 'dev'
             ),
-            batch_size=bs, shuffle=False, collate_fn=collate_fn,
-            pin_memory=True, num_workers=4
+            batch_size=bs,
+            shuffle=False,
+            collate_fn=collate_fn,
+            pin_memory=True,
+            num_workers=4
         )
         self.eval_loader = DataLoader(
             ASVSpoofDataset(
@@ -74,13 +75,36 @@ class Trainer:
                 train_config['eval_protocol'],
                 'eval'
             ),
-            batch_size=bs, shuffle=False, collate_fn=collate_fn,
-            pin_memory=True, num_workers=4
+            batch_size=bs,
+            shuffle=False,
+            collate_fn=collate_fn,
+            pin_memory=True,
+            num_workers=4
         )
 
         self.epochs = run_config['epochs']
         self.checkpoint_path = run_config['checkpoint_path']
 
+    def _compute_class_weights(self, train_config):
+        # Count samples per class
+        ds = ASVSpoofDataset(
+            train_config['train_dir'],
+            train_config['train_protocol'],
+            'train'
+        )
+        labels = [label for _, label in ds.items]
+        counts = np.bincount(labels)
+        weights = 1.0 / counts
+        class_weights = torch.tensor(weights, dtype=torch.float32)
+        return class_weights
+
+    def _create_weighted_sampler(self, train_ds):
+        labels = [label for _, label in train_ds.items]
+        counts = np.bincount(labels)
+        weights = 1.0 / counts
+        sample_weights = [weights[label] for label in labels]
+        sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
+        return sampler
 
     def train_one_epoch(self, epoch: int) -> float:
         self.model.train()
@@ -111,9 +135,7 @@ class Trainer:
         self.experiment.log_metric("train_loss", avg_loss, step=epoch)
         return avg_loss
 
-
-
-    def validate(self, loader: DataLoader, split: str, epoch: int) -> float:
+    def validate(self, loader, split: str, epoch: int) -> float:
         self.model.eval()
         all_labels, all_scores = [], []
         total_loss = 0.0
@@ -144,11 +166,10 @@ class Trainer:
         self.experiment.log_metric(f"{split}_EER", eer, step=epoch)
         return eer
 
-
     def run(self):
         best_eer = float('inf')
         no_improve = 0
-        target_eer = 0.05 
+        target_eer = 0.05
 
         for epoch in range(1, self.epochs + 1):
             train_loss = self.train_one_epoch(epoch)
@@ -165,15 +186,12 @@ class Trainer:
                 no_improve += 1
 
             self.scheduler.step(dev_eer)
-            
             if best_eer < target_eer:
                 print(f"Target EER<{target_eer*100:.1f}% reached ({best_eer*100:.2f}%).")
                 break
-
             if no_improve >= 3:
-                print("Early stopping: no improvment for 3 epochs.")
+                print("Early stopping: no improvement for 3 epochs.")
                 break
-
 
         eval_eer = self.validate(self.eval_loader, "eval", epoch)
         print(f"Final eval_EER={eval_eer*100:.2f}%")
@@ -185,31 +203,20 @@ if __name__ == '__main__':
         'train_dir': 'data/processed/train',
         'train_protocol':'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt',
         'dev_dir': 'data/processed/dev',
-        'dev_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt',
+        'dev_protocol':'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt',
         'eval_dir': 'data/processed/eval',
-        'eval_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt',
+        'eval_protocol':'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt',
         'batch_size': 16,
-    }
-    model_cfg = {
-        'input_channels': 1,
-        'channels_list': [96,192,384,256],
-        'kernel_sizes': [9,5,5,4],
-        'steps': [1,1,1,1],
-        'kernel_pool': 2,
-        'step_pool': 2,
-        'dropout': 0.5,
-        'FLayer_size': 512,
-        'n_classes': 2
     }
     run_cfg = {
         'lr': 3e-4,
         'epochs': 20,
-        'checkpoint_path':'best_lcnn4.pt',
+        'checkpoint_path':'best_lcnn.pt',
         'device': 'cuda',
-        'comet_api_key': "YTEBlOIr52k3Tuyoh3G18TYVX",
+        'comet_api_key': "YOUR_API_KEY",
         'comet_project': "spoof-recognition-public",
         'comet_workspace': None,
     }
 
-    trainer = Trainer(train_cfg, model_cfg, run_cfg)
+    trainer = Trainer(train_cfg, run_cfg)
     trainer.run()
