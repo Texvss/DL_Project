@@ -42,28 +42,37 @@ def compute_global_stats(input_dir: str) -> tuple:
     global_std = all_mags.std()
     return global_mean, global_std
 
-def compute_spectrogram(wav_path: str, global_mean: float, global_std: float) -> np.ndarray:
+def compute_spectrogram(wav_path: str) -> np.ndarray:
     torchaudio.set_audio_backend("soundfile")
-    try:
-        waveform, sr = torchaudio.load(wav_path)
-        if sr != 16000:
-            resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
-            waveform = resampler(waveform)
-        stft = torch.stft(
-            waveform,
-            n_fft=512,
-            hop_length=256,
-            win_length=512,
-            window=torch.hann_window(512),
-            return_complex=True
-        )
-        magnitude = stft.abs()
-        log_mag = 20 * torch.log10(magnitude + 1e-6)
-        norm = (log_mag - global_mean) / (global_std + 1e-6)
-        return norm.cpu().numpy()
-    except Exception as e:
-        print(f"Error processing {wav_path}: {e}")
-        raise
+    waveform, sr = torchaudio.load(wav_path)
+    if sr != 16000:
+        resampler = torchaudio.transforms.Resample(orig_freq=sr, new_freq=16000)
+        waveform = resampler(waveform)
+        sr = 16000
+
+    n_fft = 1724
+    hop_sec = 0.0081
+    hop_length= int(hop_sec * sr)
+    win_length= n_fft
+    window = torch.blackman_window(n_fft)
+    stft = torch.stft(
+        waveform,
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win_length,
+        window=window.to(waveform.device),
+        center=False,
+        return_complex=True
+    )
+
+    magnitude = stft.abs()
+    log_mag = 20 * torch.log10(magnitude + 1e-6)
+
+    mean = log_mag.mean()
+    std  = log_mag.std()
+    norm = (log_mag - mean) / std
+
+    return norm.cpu().numpy()
 
 def split_process(input_dir: str, output_dir: str, stats_file: str = None) -> None:
     os.makedirs(output_dir, exist_ok=True)

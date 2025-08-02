@@ -96,7 +96,7 @@ class Trainer:
             feats = batch['features'].to(self.device)
             labels = batch['labels'].to(self.device)
             label_counts = np.bincount(labels.cpu().numpy(), minlength=2)
-            print(f"Batch {batch_idx}: Class distribution = {label_counts}")
+            # print(f"Batch {batch_idx}: Class distribution = {label_counts}")
             self.optimizer.zero_grad()
             logits = self.model(feats)
             loss = self.loss(logits, labels)
@@ -116,30 +116,40 @@ class Trainer:
         all_labels, all_scores, all_utts = [], [], []
         total_loss = 0.0
         n_batches = len(loader)
+
         with torch.no_grad():
             for batch in loader:
                 feats = batch['features'].to(self.device)
                 labels = batch['labels'].to(self.device)
-                utts = batch['utt_id'] if 'utt_id' in batch else [f"utt_{i}" for i in range(feats.size(0))]
+                utts = batch.get('utt_id', [f"utt_{i}" for i in range(feats.size(0))])
+
                 logits = self.model(feats)
                 loss = self.loss(logits, labels)
                 total_loss += loss.item()
+
                 probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
                 all_scores.append(probs)
                 all_labels.append(labels.cpu().numpy())
                 all_utts.extend(utts)
+
         val_loss = total_loss / n_batches
         self.experiment.log_metric(f"{split}_loss", val_loss, step=epoch)
+
         y_true = np.concatenate(all_labels)
         y_scores = np.concatenate(all_scores)
+
+        assert len(all_utts) == len(y_true) == len(y_scores), "Mismatch in lengths!"
+
         bona = y_scores[y_true == 0]
         spoof = y_scores[y_true == 1]
         eer, threshold = compute_eer(bona, spoof)
         self.experiment.log_metric(f"{split}_EER", eer, step=epoch)
+
         with open("temp_cm_scores.txt", "w") as f:
-            for utt, score in zip(all_utts, y_scores):
-                key = "bonafide" if y_true[list(all_utts).index(utt)] == 0 else "spoof"
+            for label, utt, score in zip(y_true, all_utts, y_scores):
+                key = "bonafide" if label == 1 else "spoof"
                 f.write(f"{utt} - {key} {score}\n")
+
         eer_cm, min_tDCF = calculate_tDCF_EER(
             "temp_cm_scores.txt",
             self.asv_score_file,
@@ -147,7 +157,9 @@ class Trainer:
             printout=False
         )
         self.experiment.log_metric(f"{split}_min_tDCF", min_tDCF, step=epoch)
+
         return eer, min_tDCF
+
 
     def run(self):
         best_eer = float('inf')

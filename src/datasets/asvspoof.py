@@ -28,7 +28,7 @@ class ASVSpoofDataset(Dataset):
                     parts = line.strip().split()
                     if len(parts) < 2:
                         continue
-                    mapping[parts[1]] = 0 if parts[-1] == "bonafide" else 1
+                    mapping[parts[1]] = 1 if parts[-1] == "bonafide" else 0
         self.items = []
         for path in all_paths:
             utt_id = os.path.basename(path).rsplit(".", 1)[0]
