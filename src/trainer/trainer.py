@@ -20,46 +20,34 @@ class Trainer:
         self.device = torch.device(run_config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'))
         self.model = LCNN(num_classes=2).to(self.device)
 
-        # prepare datasets
         train_ds = ASVSpoofDataset(train_config['train_dir'], train_config['train_protocol'], mode='train')
-        dev_ds = ASVSpoofDataset(train_config['dev_dir'], train_config['dev_protocol'], mode='dev')
-        eval_ds = ASVSpoofDataset(train_config['eval_dir'], train_config['eval_protocol'], mode='eval')
+        dev_ds   = ASVSpoofDataset(train_config['dev_dir'],   train_config['dev_protocol'],   mode='dev')
+        eval_ds  = ASVSpoofDataset(train_config['eval_dir'],  train_config['eval_protocol'],  mode='eval')
 
-        # compute class weights and sampler from train_ds
-        weights = self._compute_class_weights(train_ds)
-        sampler = self._create_weighted_sampler(train_ds)
+        class_weights = self._compute_class_weights(train_ds)
+        sampler       = self._create_weighted_sampler(train_ds)
 
         bs = train_config['batch_size']
-        self.train_loader = DataLoader(
-            train_ds, batch_size=bs, sampler=sampler,
-            collate_fn=collate_fn, pin_memory=True, num_workers=4
-        )
-        self.dev_loader = DataLoader(
-            dev_ds, batch_size=bs, shuffle=False,
-            collate_fn=collate_fn, pin_memory=True, num_workers=4
-        )
-        self.eval_loader = DataLoader(
-            eval_ds, batch_size=bs, shuffle=False,
-            collate_fn=collate_fn, pin_memory=True, num_workers=4
-        )
+        self.train_loader = DataLoader(train_ds,   batch_size=bs, sampler=sampler,  collate_fn=collate_fn, pin_memory=True, num_workers=4)
+        self.dev_loader   = DataLoader(dev_ds,     batch_size=bs, shuffle=False,     collate_fn=collate_fn, pin_memory=True, num_workers=4)
+        self.eval_loader  = DataLoader(eval_ds,    batch_size=bs, shuffle=False,     collate_fn=collate_fn, pin_memory=True, num_workers=4)
 
-        # map eval utt to labels
-        self.eval_label_map = {
-            parts[1]: 1 if parts[-1] == 'bonafide' else 0
-            for parts in (line.strip().split() for line in open(train_config['eval_protocol'], 'r', encoding='utf-8'))
-            if len(parts) >= 2
-        }
+        self.eval_label_map = {}
+        with open(train_config['eval_protocol'], 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) < 2:
+                    continue
+                utt = parts[1]
+                label = 1 if parts[-1] == 'bonafide' else 0
+                self.eval_label_map[utt] = label
 
-        self.loss = torch.nn.CrossEntropyLoss(weight=weights.to(self.device))
+        self.loss      = torch.nn.CrossEntropyLoss(weight=class_weights.to(self.device))
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-4)
         self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 10))
-
-        self.epochs = run_config['epochs']
-        self.checkpoint_path = run_config['checkpoint_path']
-        self.asv_score_file = train_config.get(
-            'asv_score_file',
-            'data/raw/ASVspoof2019_LA_asv_scores/ASVspoof2019.LA.asv.eval.gi.trl.scores.txt'
-        )
+        self.epochs         = run_config['epochs']
+        self.checkpoint_path= run_config['checkpoint_path']
+        self.asv_score_file = train_config.get('asv_score_file')
 
     def _compute_class_weights(self, dataset):
         counts = np.bincount([label for _, label in dataset.items])
@@ -77,18 +65,18 @@ class Trainer:
         self.model.train()
         total_loss = 0.0
         for batch in self.train_loader:
-            feats = batch['features'].to(self.device)
+            feats  = batch['features'].to(self.device)
             labels = batch['labels'].to(self.device)
             self.optimizer.zero_grad()
             logits = self.model(feats)
-            loss = self.loss(logits, labels)
+            loss   = self.loss(logits, labels)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.optimizer.step()
             total_loss += loss.item() * feats.size(0)
-        avg = total_loss / len(self.train_loader.dataset)
-        self.experiment.log_metric('train_loss', avg, step=epoch)
-        return avg
+        avg_loss = total_loss / len(self.train_loader.dataset)
+        self.experiment.log_metric('train_loss', avg_loss, step=epoch)
+        return avg_loss
 
     def validate(self, loader, split: str, epoch: int) -> tuple:
         self.model.eval()
@@ -97,41 +85,40 @@ class Trainer:
         with torch.no_grad():
             for batch in loader:
                 feats = batch['features'].to(self.device)
-                if split == 'eval':
-                    utts = batch['utt_id']
-                    labels = torch.tensor([self.eval_label_map[utt] for utt in utts], device=self.device)
-                else:
+                if 'labels' in batch:
                     labels = batch['labels'].to(self.device)
-                    utts = [f'dev_{i}' for i in range(labels.size(0))]
+                    utts   = batch.get('utt_id', [f'{split}_{i}' for i in range(labels.size(0))])
+                else:
+                    utts = batch['utt_id']
+                    labels = torch.tensor([self.eval_label_map.get(u, 0) for u in utts], device=self.device)
                 logits = self.model(feats)
-                loss = self.loss(logits, labels)
+                loss   = self.loss(logits, labels)
                 total_loss += loss.item()
                 scores = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
                 all_scores.append(scores)
                 all_labels.append(labels.cpu().numpy())
                 all_utts.extend(utts)
         val_loss = total_loss / len(loader)
-        y_true = np.concatenate(all_labels)
+        y_true   = np.concatenate(all_labels)
         y_scores = np.concatenate(all_scores)
-        bona = y_scores[y_true == 0]
+        bona  = y_scores[y_true == 0]
         spoof = y_scores[y_true == 1]
-        eer, _ = compute_eer(bona, spoof)
-        self.experiment.log_metric(f'{split}_loss', val_loss, step=epoch)
-        self.experiment.log_metric(f'{split}_EER', eer, step=epoch)
+        eer, _        = compute_eer(bona, spoof)
+        self.experiment.log_metric(f'{split}_loss',    val_loss, step=epoch)
+        self.experiment.log_metric(f'{split}_EER',     eer,      step=epoch)
         with open('temp_cm_scores.txt', 'w') as f:
-            for utt, lbl, sc in zip(all_utts, y_true, y_scores):
-                key = 'bonafide' if lbl == 0 else 'spoof'
-                f.write(f"{utt} - {key} {sc}\n")
+            for u, l, s in zip(all_utts, y_true, y_scores):
+                key = 'bonafide' if l == 0 else 'spoof'
+                f.write(f"{u} - {key} {s}\n")
         _, min_tDCF = calculate_tDCF_EER('temp_cm_scores.txt', self.asv_score_file, 'temp_output.txt', printout=False)
         self.experiment.log_metric(f'{split}_min_tDCF', min_tDCF, step=epoch)
         return eer, min_tDCF
 
     def run(self):
-        best_eer, patience = float('inf'), 0
-        target = 0.1
+        best_eer, patience, target = float('inf'), 0, 0.1
         for epoch in range(1, self.epochs + 1):
             self.train_one_epoch(epoch)
-            dev_eer, _ = self.validate(self.dev_loader, 'dev', epoch)
+            dev_eer, _  = self.validate(self.dev_loader,  'dev',  epoch)
             eval_eer, _ = self.validate(self.eval_loader, 'eval', epoch)
             print(f'Epoch {epoch}: dev_EER={dev_eer*100:.2f}%, eval_EER={eval_eer*100:.2f}%')
             if dev_eer < best_eer:
@@ -147,6 +134,7 @@ class Trainer:
         if final_eer > target:
             raise RuntimeError(f"Eval EER {final_eer*100:.2f}% exceeds target")
         self.experiment.end()
+
 
 if __name__ == '__main__':
     train_cfg = {
