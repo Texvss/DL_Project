@@ -29,12 +29,6 @@ class ASVSpoofDataset(Dataset):
                     if len(parts) < 2:
                         continue
                     mapping[parts[1]] = 1 if parts[-1] == "bonafide" else 0
-        print("=== DEBUG mapping (первые 10) ===")
-        for i, (utt_id, lbl) in enumerate(mapping.items()):
-            if i >= 10:
-                break
-            print(f"{i+1:2d}: {utt_id} -> {lbl}")
-        print("=================================")
         self.items = []
         for path in all_paths:
             utt_id = os.path.basename(path).rsplit(".", 1)[0]
