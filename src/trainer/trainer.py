@@ -19,32 +19,40 @@ class Trainer:
         self.experiment.log_parameters({**train_config, **run_config})
         self.device = torch.device(run_config.get('device', 'cuda' if torch.cuda.is_available() else 'cpu'))
         self.model = LCNN(num_classes=2).to(self.device)
-        weights = self._compute_class_weights(train_config)
-        self.loss = torch.nn.CrossEntropyLoss(weight=weights.to(self.device))
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-4)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 10))
+
+        # prepare datasets
+        train_ds = ASVSpoofDataset(train_config['train_dir'], train_config['train_protocol'], mode='train')
+        dev_ds = ASVSpoofDataset(train_config['dev_dir'], train_config['dev_protocol'], mode='dev')
+        eval_ds = ASVSpoofDataset(train_config['eval_dir'], train_config['eval_protocol'], mode='eval')
+
+        # compute class weights and sampler from train_ds
+        weights = self._compute_class_weights(train_ds)
+        sampler = self._create_weighted_sampler(train_ds)
 
         bs = train_config['batch_size']
-        train_ds = ASVSpoofDataset(train_config['train_dir'], train_config['train_protocol'], mode='train')
         self.train_loader = DataLoader(
-            train_ds, batch_size=bs,
-            sampler=self._create_weighted_sampler(train_ds),
+            train_ds, batch_size=bs, sampler=sampler,
             collate_fn=collate_fn, pin_memory=True, num_workers=4
         )
         self.dev_loader = DataLoader(
-            ASVSpoofDataset(train_config['dev_dir'], train_config['dev_protocol'], mode='dev'),
-            batch_size=bs, shuffle=False, collate_fn=collate_fn, pin_memory=True, num_workers=4
+            dev_ds, batch_size=bs, shuffle=False,
+            collate_fn=collate_fn, pin_memory=True, num_workers=4
         )
         self.eval_loader = DataLoader(
-            ASVSpoofDataset(train_config['eval_dir'], train_config['eval_protocol'], mode='eval'),
-            batch_size=bs, shuffle=False, collate_fn=collate_fn, pin_memory=True, num_workers=4
+            eval_ds, batch_size=bs, shuffle=False,
+            collate_fn=collate_fn, pin_memory=True, num_workers=4
         )
 
-        self.eval_label_map = {}
-        with open(train_config['eval_protocol'], 'r', encoding='utf-8') as f:
-            for line in f:
-                parts = line.strip().split()
-                self.eval_label_map[parts[1]] = 1 if parts[-1] == 'bonafide' else 0
+        # map eval utt to labels
+        self.eval_label_map = {
+            parts[1]: 1 if parts[-1] == 'bonafide' else 0
+            for parts in (line.strip().split() for line in open(train_config['eval_protocol'], 'r', encoding='utf-8'))
+            if len(parts) >= 2
+        }
+
+        self.loss = torch.nn.CrossEntropyLoss(weight=weights.to(self.device))
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-4)
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 10))
 
         self.epochs = run_config['epochs']
         self.checkpoint_path = run_config['checkpoint_path']
@@ -53,22 +61,21 @@ class Trainer:
             'data/raw/ASVspoof2019_LA_asv_scores/ASVspoof2019.LA.asv.eval.gi.trl.scores.txt'
         )
 
-    def _compute_class_weights(self, train_config):
-        ds = ASVSpoofDataset(train_config['train_dir'], train_config['train_protocol'], mode='train')
-        counts = np.bincount([label for _, label in ds.items])
+    def _compute_class_weights(self, dataset):
+        counts = np.bincount([label for _, label in dataset.items])
         weights = 1.0 / counts
         weights[0] *= 2.0
         return torch.tensor(weights, dtype=torch.float32)
 
     def _create_weighted_sampler(self, dataset):
         counts = np.bincount([label for _, label in dataset.items])
-        weights = 1.0 / counts
-        sample_weights = [weights[label] for _, label in dataset.items]
+        w = 1.0 / counts
+        sample_weights = [w[label] for _, label in dataset.items]
         return WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
 
     def train_one_epoch(self, epoch: int) -> float:
         self.model.train()
-        total = 0.0
+        total_loss = 0.0
         for batch in self.train_loader:
             feats = batch['features'].to(self.device)
             labels = batch['labels'].to(self.device)
@@ -78,15 +85,15 @@ class Trainer:
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.optimizer.step()
-            total += loss.item() * feats.size(0)
-        avg = total / len(self.train_loader.dataset)
+            total_loss += loss.item() * feats.size(0)
+        avg = total_loss / len(self.train_loader.dataset)
         self.experiment.log_metric('train_loss', avg, step=epoch)
         return avg
 
     def validate(self, loader, split: str, epoch: int) -> tuple:
         self.model.eval()
-        all_labels, all_scores = [], []
-        total = 0.0
+        all_labels, all_scores, all_utts = [], [], []
+        total_loss = 0.0
         with torch.no_grad():
             for batch in loader:
                 feats = batch['features'].to(self.device)
@@ -95,13 +102,15 @@ class Trainer:
                     labels = torch.tensor([self.eval_label_map[utt] for utt in utts], device=self.device)
                 else:
                     labels = batch['labels'].to(self.device)
-                    utts = batch.get('utt_id', [])
+                    utts = [f'dev_{i}' for i in range(labels.size(0))]
                 logits = self.model(feats)
-                total += self.loss(logits, labels).item()
-                probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
-                all_scores.append(probs)
+                loss = self.loss(logits, labels)
+                total_loss += loss.item()
+                scores = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
+                all_scores.append(scores)
                 all_labels.append(labels.cpu().numpy())
-        val_loss = total / len(loader)
+                all_utts.extend(utts)
+        val_loss = total_loss / len(loader)
         y_true = np.concatenate(all_labels)
         y_scores = np.concatenate(all_scores)
         bona = y_scores[y_true == 0]
@@ -110,7 +119,7 @@ class Trainer:
         self.experiment.log_metric(f'{split}_loss', val_loss, step=epoch)
         self.experiment.log_metric(f'{split}_EER', eer, step=epoch)
         with open('temp_cm_scores.txt', 'w') as f:
-            for lbl, utt, sc in zip(y_true, batch.get('utt_id', []), y_scores):
+            for utt, lbl, sc in zip(all_utts, y_true, y_scores):
                 key = 'bonafide' if lbl == 0 else 'spoof'
                 f.write(f"{utt} - {key} {sc}\n")
         _, min_tDCF = calculate_tDCF_EER('temp_cm_scores.txt', self.asv_score_file, 'temp_output.txt', printout=False)
@@ -118,28 +127,26 @@ class Trainer:
         return eer, min_tDCF
 
     def run(self):
-        best, wait = float('inf'), 0
+        best_eer, patience = float('inf'), 0
         target = 0.1
         for epoch in range(1, self.epochs + 1):
-            _ = self.train_one_epoch(epoch)
+            self.train_one_epoch(epoch)
             dev_eer, _ = self.validate(self.dev_loader, 'dev', epoch)
             eval_eer, _ = self.validate(self.eval_loader, 'eval', epoch)
             print(f'Epoch {epoch}: dev_EER={dev_eer*100:.2f}%, eval_EER={eval_eer*100:.2f}%')
-            if dev_eer < best:
-                best, wait = dev_eer, 0
+            if dev_eer < best_eer:
+                best_eer, patience = dev_eer, 0
                 torch.save(self.model.state_dict(), self.checkpoint_path)
             else:
-                wait += 1
+                patience += 1
             self.scheduler.step()
-            if best < target or wait >= 5:
+            if best_eer < target or patience >= 5:
                 break
         final_eer, _ = self.validate(self.eval_loader, 'eval', epoch)
         print(f'Final Eval EER: {final_eer*100:.2f}%')
         if final_eer > target:
             raise RuntimeError(f"Eval EER {final_eer*100:.2f}% exceeds target")
         self.experiment.end()
-
-
 
 if __name__ == '__main__':
     train_cfg = {
