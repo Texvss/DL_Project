@@ -127,7 +127,7 @@ class Trainer:
                 loss = self.loss(logits, labels)
                 total_loss += loss.item()
 
-                probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
+                probs = torch.softmax(logits, dim=1)[:, 0].cpu().numpy()
                 all_scores.append(probs)
                 all_labels.append(labels.cpu().numpy())
                 all_utts.extend(utts)
@@ -140,8 +140,8 @@ class Trainer:
 
         assert len(all_utts) == len(y_true) == len(y_scores), "Mismatch in lengths!"
 
-        bona = y_scores[y_true == 0]
-        spoof = y_scores[y_true == 1]
+        bona = y_scores[y_true == 1]
+        spoof = y_scores[y_true == 0]
         eer, threshold = compute_eer(bona, spoof)
         self.experiment.log_metric(f"{split}_EER", eer, step=epoch)
 
