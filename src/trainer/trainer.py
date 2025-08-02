@@ -1,13 +1,15 @@
-from comet_ml import Experiment
 import os
 import torch
 import numpy as np
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from torch.optim.lr_scheduler import CosineAnnealingLR
+from comet_ml import Experiment
 from src.datasets.asvspoof import ASVSpoofDataset
 from src.datasets.collate import collate_fn
 from src.model.lcnn import LCNN
-from src.metrics.calculate_eer import compute_eer, calculate_tDCF_EER
+from src.metrics.calculate_eer import compute_eer
+
+torch._dynamo.config.suppress_errors = True
 
 class Trainer:
     def __init__(self, train_config: dict, run_config: dict):
@@ -17,21 +19,15 @@ class Trainer:
             workspace=run_config.get("comet_workspace", None)
         )
         self.experiment.log_parameters({**train_config, **run_config})
-        self.device = torch.device(run_config.get("device", "cuda" if torch.cuda.is_available() else "cpu"))
-        self.model = LCNN(num_classes=2).to(self.device)
-        class_weights = self._compute_class_weights(train_config)
-        self.loss = torch.nn.CrossEntropyLoss(weight=class_weights.to(self.device))
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-4)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=10)
-        bs = train_config['batch_size']
-        train_ds = ASVSpoofDataset(
-            train_config['train_dir'],
-            train_config['train_protocol'],
-            'train'
+        self.device = torch.device(
+            run_config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
         )
-        sampler = self._create_weighted_sampler(train_ds)
+        self.model = LCNN(num_classes=2).to(self.device)
+
+        sampler = self._create_weighted_sampler(train_config)
+        bs = train_config['batch_size']
         self.train_loader = DataLoader(
-            train_ds,
+            ASVSpoofDataset(train_config['train_dir'], train_config['train_protocol'], 'train'),
             batch_size=bs,
             sampler=sampler,
             collate_fn=collate_fn,
@@ -39,11 +35,7 @@ class Trainer:
             num_workers=4
         )
         self.dev_loader = DataLoader(
-            ASVSpoofDataset(
-                train_config['dev_dir'],
-                train_config['dev_protocol'],
-                'dev'
-            ),
+            ASVSpoofDataset(train_config['dev_dir'], train_config['dev_protocol'], 'dev'),
             batch_size=bs,
             shuffle=False,
             collate_fn=collate_fn,
@@ -51,41 +43,47 @@ class Trainer:
             num_workers=4
         )
         self.eval_loader = DataLoader(
-            ASVSpoofDataset(
-                train_config['eval_dir'],
-                train_config['eval_protocol'],
-                'eval'
-            ),
+            ASVSpoofDataset(train_config['eval_dir'], train_config['eval_protocol'], 'eval'),
             batch_size=bs,
             shuffle=False,
             collate_fn=collate_fn,
             pin_memory=True,
             num_workers=4
         )
+
+        self.eval_label_map = {}
+        with open(train_config['eval_protocol'], 'r', encoding='utf-8') as f:
+            for line in f:
+                parts = line.strip().split()
+                if len(parts) < 2:
+                    continue
+                utt, lbl = parts[1], parts[-1]
+                self.eval_label_map[utt] = 1 if lbl == 'bonafide' else 0
+
+        class_weights = self._compute_class_weights(train_config)
+        self.loss = torch.nn.CrossEntropyLoss(weight=class_weights.to(self.device))
+        print("Before optimizer initialization")
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'])
+        print("After optimizer initialization")
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 10))
         self.epochs = run_config['epochs']
         self.checkpoint_path = run_config['checkpoint_path']
-        self.asv_score_file = train_config.get('asv_score_file', 'data/raw/ASVspoof2019_LA_asv_scores/ASVspoof2019.LA.asv.eval.gi.trl.scores.txt')
 
-    def _compute_class_weights(self, train_config):
-        ds = ASVSpoofDataset(
-            train_config['train_dir'],
-            train_config['train_protocol'],
-            'train'
-        )
+    def _compute_class_weights(self, cfg):
+        ds = ASVSpoofDataset(cfg['train_dir'], cfg['train_protocol'], 'train')
         labels = [label for _, label in ds.items]
         counts = np.bincount(labels)
         weights = 1.0 / counts
-        weights[0] *= 2.0
-        class_weights = torch.tensor(weights, dtype=torch.float32)
-        return class_weights
+        weights[1] *= 2.0
+        return torch.tensor(weights, dtype=torch.float32)
 
-    def _create_weighted_sampler(self, train_ds):
-        labels = [label for _, label in train_ds.items]
+    def _create_weighted_sampler(self, cfg):
+        ds = ASVSpoofDataset(cfg['train_dir'], cfg['train_protocol'], 'train')
+        labels = [label for _, label in ds.items]
         counts = np.bincount(labels)
-        weights = 1.0 / counts
-        sample_weights = [weights[label] for label in labels]
-        sampler = WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
-        return sampler
+        w = 1.0 / counts
+        sample_weights = [w[label] for label in labels]
+        return WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
 
     def train_one_epoch(self, epoch: int) -> float:
         self.model.train()
@@ -111,101 +109,48 @@ class Trainer:
         self.experiment.log_metric("train_loss", avg_loss, step=epoch)
         return avg_loss
 
-    def validate(self, loader, split: str, epoch: int) -> tuple:
+    def validate(self, loader, split: str, epoch: int) -> float:
         self.model.eval()
-        all_labels, all_scores, all_utts = [], [], []
-        total_loss = 0.0
-        n_batches = len(loader)
-
+        all_labels, all_scores = [], []
         with torch.no_grad():
             for batch in loader:
                 feats = batch['features'].to(self.device)
-                labels = batch['labels'].to(self.device)
-                utts = batch.get('utt_id', [f"utt_{i}" for i in range(feats.size(0))])
-
+                if 'labels' in batch:
+                    labels = batch['labels'].to(self.device)
+                else:
+                    utts = batch['utt_id']
+                    labels = torch.tensor([
+                        self.eval_label_map.get(u, 0) for u in utts
+                    ], dtype=torch.long, device=self.device)
                 logits = self.model(feats)
-                loss = self.loss(logits, labels)
-                total_loss += loss.item()
-
-                probs = torch.softmax(logits, dim=1)[:, ].cpu().numpy()
+                probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
                 all_scores.append(probs)
                 all_labels.append(labels.cpu().numpy())
-                all_utts.extend(utts)
-
-        val_loss = total_loss / n_batches
-        self.experiment.log_metric(f"{split}_loss", val_loss, step=epoch)
-
         y_true = np.concatenate(all_labels)
         y_scores = np.concatenate(all_scores)
-
-        assert len(all_utts) == len(y_true) == len(y_scores), "Mismatch in lengths!"
-
         bona = y_scores[y_true == 1]
         spoof = y_scores[y_true == 0]
-        eer, threshold = compute_eer(bona, spoof)
-        self.experiment.log_metric(f"{split}_EER", eer, step=epoch)
-
-        with open("temp_cm_scores.txt", "w") as f:
-            for label, utt, score in zip(y_true, all_utts, y_scores):
-                key = "bonafide" if label == 1 else "spoof"
-                f.write(f"{utt} - {key} {score}\n")
-
-        eer_cm, min_tDCF = calculate_tDCF_EER(
-            "temp_cm_scores.txt",
-            self.asv_score_file,
-            "temp_output.txt",
-            printout=False
-        )
-        self.experiment.log_metric(f"{split}_min_tDCF", min_tDCF, step=epoch)
-
-        return eer, min_tDCF
-
+        eer, _ = compute_eer(bona, spoof)
+        self.experiment.log_metric(f'{split}_EER', eer, step=epoch)
+        return eer
 
     def run(self):
-        best_eer = float('inf')
-        no_improve = 0
-        target_eer = 0.1
+        best_eer, no_improve = float('inf'), 0
         for epoch in range(1, self.epochs + 1):
             train_loss = self.train_one_epoch(epoch)
-            dev_eer, dev_tDCF = self.validate(self.dev_loader, "dev", epoch)
-            print(f"Epoch {epoch}: train_loss={train_loss:.4f}, dev_EER={dev_eer*100:.2f}%, dev_tDCF={dev_tDCF:.4f}")
+            dev_eer = self.validate(self.dev_loader, 'dev', epoch)
+            eval_eer = self.validate(self.eval_loader, 'eval', epoch)
+            print(
+                f"Epoch {epoch}: train_loss={train_loss:.4f}, "
+                f"dev_EER={dev_eer*100:.2f}%, eval_EER={eval_eer*100:.2f}%"
+            )
             if dev_eer < best_eer:
-                best_eer = dev_eer
-                no_improve = 0
+                best_eer, no_improve = dev_eer, 0
                 torch.save(self.model.state_dict(), self.checkpoint_path)
-                print(f"New best model saved (EER={best_eer*100:.2f}%)")
             else:
                 no_improve += 1
             self.scheduler.step()
-            if best_eer < target_eer:
-                print(f"Target EER<{target_eer*100:.1f}% reached ({best_eer*100:.2f}%).")
-                break
             if no_improve >= 5:
-                print("Early stopping: no improvement for 5 epochs.")
                 break
-        eval_eer, eval_tDCF = self.validate(self.eval_loader, "eval", epoch)
-        print(f"Final eval_EER={eval_eer*100:.2f}%, eval_tDCF={eval_tDCF:.4f}")
-        self.experiment.end()
-
-if __name__ == '__main__':
-    train_cfg = {
-        'train_dir': 'data/processed/train',
-        'train_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt',
-        'dev_dir': 'data/processed/dev',
-        'dev_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt',
-        'eval_dir': 'data/processed/eval',
-        'eval_protocol': 'data/raw/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt',
-        'batch_size': 16,
-        'asv_score_file': 'data/raw/ASVspoof2019_LA_asv_scores/ASVspoof2019.LA.asv.eval.gi.trl.scores.txt'
-    }
-    run_cfg = {
-        'lr': 1e-3,
-        'epochs': 3,
-        'checkpoint_path': 'best_lcnn.pt',
-        'device': 'cpu',
-        'comet_api_key': "YOUR_API_KEY",
-        'comet_project': "spoof-recognition-public",
-        'comet_workspace': None,
-    }
-    trainer = Trainer(train_cfg, run_cfg)
-    trainer.run()
+        final_eer = self.validate(self.eval_loader, 'eval', self.epochs)
+        print(f'Final eval_EER={final_eer*100:.2f}%')
