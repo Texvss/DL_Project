@@ -127,7 +127,7 @@ class Trainer:
                 loss = self.loss(logits, labels)
                 total_loss += loss.item()
 
-                probs = torch.softmax(logits, dim=1)[:, 0].cpu().numpy()
+                probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
                 all_scores.append(probs)
                 all_labels.append(labels.cpu().numpy())
                 all_utts.extend(utts)
