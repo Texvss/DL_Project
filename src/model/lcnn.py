@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-import torch.nn.functional as F
+import torch.nn.functional
 from .angle_linear import AngleLinear
 
 class MFM(nn.Module):
@@ -79,7 +79,7 @@ class LCNN(nn.Module):
         x = torch.max(a, b)
         x = self.bn_fc2(x)
         x = self.dropout(x)
-        x = F.normalize(x, dim=1)
+        x = torch.nn.functional.normalize(x, dim=1)
         if labels is not None:
             cos_m_theta = self.angle_fc(x, labels)
             logits = self.s * cos_m_theta
