@@ -14,8 +14,7 @@ class ASVSpoofDataset(Dataset):
         if mode == "train" and transform is None:
             self.transform = torch.nn.Sequential(
                 T.FrequencyMasking(freq_mask_param=30),
-            T.TimeMasking(time_mask_param=50),
-            T.AdditiveNoise(noise_levels=(0.0, 0.5))
+            T.TimeMasking(time_mask_param=50)
             )
         all_paths = sorted(glob.glob(os.path.join(processed_dir, "*.npy")))
         if not all_paths:
