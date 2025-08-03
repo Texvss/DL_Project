@@ -13,9 +13,14 @@ class ASVSpoofDataset(Dataset):
         self.transform = transform
         if mode == "train" and transform is None:
             self.transform = torch.nn.Sequential(
-                T.FrequencyMasking(freq_mask_param=30),
-                T.TimeMasking(time_mask_param=50),
-                T.Vol(gain=0.2, gain_type='amplitude')
+                T.FrequencyMasking(freq_mask_param=15),
+                T.TimeMasking(time_mask_param=30),
+                T.Vol(gain=0.1, gain_type='amplitude')
+            )
+        elif mode == "dev" and transform is None:
+            self.transform = torch.nn.Sequential(
+                T.FrequencyMasking(freq_mask_param=8),
+                T.TimeMasking(time_mask_param=15)
             )
         all_paths = sorted(glob.glob(os.path.join(processed_dir, "*.npy")))
         if not all_paths:
@@ -64,7 +69,7 @@ class ASVSpoofDataset(Dataset):
             feats = torch.nn.functional.pad(feats, (0, pad_amt))
         else:
             feats = feats[:, :, :self.TARGET_T]
-        if self.mode == "train" and self.transform:
+        if self.transform:
             feats = self.transform(feats)
         if self.mode in ("train", "dev"):
             return {"features": feats, "labels": val}
