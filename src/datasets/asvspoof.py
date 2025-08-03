@@ -13,13 +13,13 @@ class ASVSpoofDataset(Dataset):
         self.transform = transform
         if mode == "train" and transform is None:
             self.transform = torch.nn.Sequential(
-                T.FrequencyMasking(freq_mask_param=15),
-                T.TimeMasking(time_mask_param=30),
-                T.Vol(gain=0.1, gain_type='amplitude')
+                T.FrequencyMasking(freq_mask_param=20),
+                T.TimeMasking(time_mask_param=40),
+                T.Vol(gain=0.15, gain_type='amplitude')
             )
         elif mode == "dev" and transform is None:
             self.transform = torch.nn.Sequential(
-                T.FrequencyMasking(freq_mask_param=8),
+                T.FrequencyMasking(freq_mask_param=10),
                 T.TimeMasking(time_mask_param=15)
             )
         all_paths = sorted(glob.glob(os.path.join(processed_dir, "*.npy")))

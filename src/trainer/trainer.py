@@ -1,4 +1,5 @@
 import os
+import time
 import torch
 import torch.nn as nn
 import numpy as np
@@ -26,6 +27,13 @@ class Trainer:
             run_config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
         )
         self.model = LCNN(num_classes=2).to(self.device)
+
+        # Явное создание папки checkpoints
+        checkpoint_dir = "/kaggle/working/checkpoints"
+        os.makedirs(checkpoint_dir, exist_ok=True)
+        self.checkpoint_path = os.path.join(checkpoint_dir, "best_lcnn.pt")
+        print(f"Checkpoint directory created at: {checkpoint_dir}")
+        print(f"Model will be saved to: {self.checkpoint_path}")
 
         sampler = self._create_weighted_sampler(train_config)
         bs = train_config['batch_size']
@@ -65,19 +73,19 @@ class Trainer:
                 self.eval_label_map[utt] = 1 if lbl == 'bonafide' else 0
 
         class_weights = self._compute_class_weights(train_config)
+        print(f"Class weights: spoof={class_weights[0]:.8f}, bonafide={class_weights[1]:.8f}")
         self.loss = nn.CrossEntropyLoss(weight=class_weights.to(self.device))
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-2)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 10))
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 12))
         self.epochs = run_config['epochs']
-        self.checkpoint_path = run_config['checkpoint_path']
-        os.makedirs(os.path.dirname(self.checkpoint_path), exist_ok=True)
 
     def _compute_class_weights(self, cfg):
         ds = ASVSpoofDataset(cfg['train_dir'], cfg['train_protocol'], 'train')
         labels = [label for _, label in ds.items]
         counts = np.bincount(labels)
         weights = 1.0 / counts
-        weights[1] *= 1.0
+        weights[1] *= 2.0  # Значение, давшее eval_EER=8.27%
+        print(f"Raw counts: spoof={counts[0]}, bonafide={counts[1]}")
         return torch.tensor(weights, dtype=torch.float32)
 
     def _create_weighted_sampler(self, cfg):
@@ -88,7 +96,15 @@ class Trainer:
         sample_weights = [w[label] for label in labels]
         return WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
 
+    def mixup_data(self, x, y, alpha=0.2):
+        lam = np.random.beta(alpha, alpha) if alpha > 0 else 1
+        index = torch.randperm(x.size(0)).to(x.device)
+        mixed_x = lam * x + (1 - lam) * x[index]
+        y_a, y_b = y, y[index]
+        return mixed_x, y_a, y_b, lam
+
     def train_one_epoch(self, epoch: int) -> float:
+        start_time = time.time()
         self.model.train()
         total_loss = 0.0
         num_batches = len(self.train_loader)
@@ -96,18 +112,27 @@ class Trainer:
         for batch_idx, batch in enumerate(self.train_loader, 1):
             feats = batch['features'].to(self.device)
             labels = batch['labels'].to(self.device)
-            self.optimizer.zero_grad()
-            logits = self.model(feats)
-            loss = self.loss(logits, labels)
+            if torch.rand(1) < 0.5:  # Mixup с вероятностью 50%
+                feats, labels_a, labels_b, lam = self.mixup_data(feats, labels, alpha=0.2)
+                self.optimizer.zero_grad()
+                logits = self.model(feats)
+                loss = lam * self.loss(logits, labels_a) + (1 - lam) * self.loss(logits, labels_b)
+            else:
+                self.optimizer.zero_grad()
+                logits = self.model(feats)
+                loss = self.loss(logits, labels)
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.optimizer.step()
             total_loss += loss.item() * feats.size(0)
             if batch_idx % 10 == 0 or batch_idx == num_batches:
                 print(f"  [Epoch {epoch}] batch {batch_idx}/{num_batches}  loss = {loss.item():.4f}")
         avg_loss = total_loss / len(self.train_loader.dataset)
-        print(f"[Epoch {epoch}] finished — avg train loss = {avg_loss:.4f}\n")
+        epoch_time = time.time() - start_time
+        print(f"[Epoch {epoch}] finished — avg train loss = {avg_loss:.4f}, epoch_time = {epoch_time:.2f}s\n")
         self.experiment.log_metric("train_loss", avg_loss, step=epoch)
+        self.experiment.log_metric("grad_norm", grad_norm, step=epoch)
+        self.experiment.log_metric("epoch_time", epoch_time, step=epoch)
         return avg_loss
 
     def validate(self, loader, split: str, epoch: int) -> float:
@@ -133,8 +158,8 @@ class Trainer:
         spoof = y_scores[y_true == 0]
         eer, _ = compute_eer(bona, spoof)
         accuracy = accuracy_score(y_true, (y_scores > 0.5).astype(int))
-        self.experiment.log_metric(f'{split}_EER', eer, step=epoch)
-        self.experiment.log_metric(f'{split}_accuracy', accuracy, step=epoch)
+        self.experiment.log_metric(f'{split}_EER', eer * 100, step=epoch)  # В процентах
+        self.experiment.log_metric(f'{split}_accuracy', accuracy * 100, step=epoch)  # В процентах
         return eer
 
     def run(self):
@@ -150,10 +175,11 @@ class Trainer:
             if dev_eer < best_eer:
                 best_eer, no_improve = dev_eer, 0
                 torch.save(self.model.state_dict(), self.checkpoint_path)
+                print(f"Saved model to {self.checkpoint_path} with dev_EER={dev_eer*100:.2f}%")
             else:
                 no_improve += 1
             self.scheduler.step()
-            if no_improve >= 3:
+            if no_improve >= 6:
                 print("Early stopping")
                 break
         final_eer = self.validate(self.eval_loader, 'eval', self.epochs)
@@ -171,15 +197,15 @@ if __name__ == '__main__':
     }
 
     run_cfg = {
-        "lr": 1e-4,
-        "epochs": 16,
+        "lr": 5e-5,
+        "epochs": 20,
         "checkpoint_path": "/kaggle/working/checkpoints/best_lcnn.pt",
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "comet_api_key": os.environ["COMET_API_KEY"],
         "comet_project": "anti-spoof",
         "comet_workspace": None,
-        "num_workers": 8,
-        "T_max": 10
+        "num_workers": 4,
+        "T_max": 12
     }
-    trainer = Trainer(train_cfg, run_cfg)
+    trainer = Trainer(train_cfg, run_config=run_cfg)
     trainer.run()
