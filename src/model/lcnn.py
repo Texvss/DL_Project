@@ -1,7 +1,6 @@
 import torch
-from torch import nn
-import torch.nn.functional
-from .angle_linear import AngleLinear
+import torch.nn as nn
+import torch.nn.functional as F
 
 class MFM(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0):
@@ -54,11 +53,9 @@ class LCNN(nn.Module):
         self.bn_fc1 = nn.BatchNorm1d(256)
         self.bn_fc2 = nn.BatchNorm1d(128)
         self.dropout = nn.Dropout(0.75)
-        # self.fc2 = nn.Linear(128, num_classes)
-        self.angle_fc = AngleLinear(128, num_classes, m=3)
-        self.s = 30.0
+        self.fc2 = nn.Linear(128, num_classes)
 
-    def forward(self, x: torch.Tensor, labels: torch.LongTensor = None) -> torch.Tensor:
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         if x.shape[1] != 1 or x.shape[2] != 257:
             raise ValueError(f"Expected input shape (B, 1, 257, T), got {x.shape}")
         B, C, F, T = x.shape
@@ -79,11 +76,5 @@ class LCNN(nn.Module):
         x = torch.max(a, b)
         x = self.bn_fc2(x)
         x = self.dropout(x)
-        x = torch.nn.functional.normalize(x, dim=1)
-        if labels is not None:
-            cos_m_theta = self.angle_fc(x, labels)
-            logits = self.s * cos_m_theta
-        else:
-            cos_t = self.angle_fc(x)
-            logits = self.s * cos_t
+        logits = self.fc2(x)
         return logits
