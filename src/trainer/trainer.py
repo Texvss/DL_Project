@@ -152,8 +152,8 @@ class Trainer:
             else:
                 no_improve += 1
             self.scheduler.step()
-            if no_improve >= 5:
-                print('Early stopping: no improvement for 5 epochs.')
-                break
+            # if no_improve >= 5:
+            #     print('Early stopping: no improvement for 5 epochs.')
+                # break
         final_eer = self.validate(self.eval_loader, 'eval', self.epochs)
         print(f'Final eval_EER={final_eer*100:.2f}%')
