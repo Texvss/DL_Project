@@ -22,6 +22,7 @@ class Trainer:
         self.device = torch.device(
             run_config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
         )
+        # инициализируем LCNN с A-Softmax
         self.model = LCNN(num_classes=2).to(self.device)
 
         sampler = self._create_weighted_sampler(train_config)
@@ -51,6 +52,7 @@ class Trainer:
             num_workers=4
         )
 
+        # создаем словарь меток для eval
         self.eval_label_map = {}
         with open(train_config['eval_protocol'], 'r', encoding='utf-8') as f:
             for line in f:
@@ -62,10 +64,11 @@ class Trainer:
 
         class_weights = self._compute_class_weights(train_config)
         self.loss = torch.nn.CrossEntropyLoss(weight=class_weights.to(self.device))
-        print("Before optimizer initialization")
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'])
-        print("After optimizer initialization")
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 10))
+        # self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-4)
+        # self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 10))
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), lr=4.6e-4, weight_decay=1e-5)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.98)
+
         self.epochs = run_config['epochs']
         self.checkpoint_path = run_config['checkpoint_path']
 
@@ -74,7 +77,7 @@ class Trainer:
         labels = [label for _, label in ds.items]
         counts = np.bincount(labels)
         weights = 1.0 / counts
-        weights[1] *= 2.0
+        weights[0] *= 2.0
         return torch.tensor(weights, dtype=torch.float32)
 
     def _create_weighted_sampler(self, cfg):
@@ -93,10 +96,8 @@ class Trainer:
         for batch_idx, batch in enumerate(self.train_loader, 1):
             feats = batch['features'].to(self.device)
             labels = batch['labels'].to(self.device)
-            label_counts = np.bincount(labels.cpu().numpy(), minlength=2)
-            # print(f"Batch {batch_idx}: Class distribution = {label_counts}")
             self.optimizer.zero_grad()
-            logits = self.model(feats)
+            logits = self.model(feats, labels)
             loss = self.loss(logits, labels)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
@@ -119,9 +120,10 @@ class Trainer:
                     labels = batch['labels'].to(self.device)
                 else:
                     utts = batch['utt_id']
-                    labels = torch.tensor([
-                        self.eval_label_map.get(u, 0) for u in utts
-                    ], dtype=torch.long, device=self.device)
+                    labels = torch.tensor(
+                        [self.eval_label_map.get(u, 0) for u in utts],
+                        dtype=torch.long, device=self.device
+                    )
                 logits = self.model(feats)
                 probs = torch.softmax(logits, dim=1)[:, 1].cpu().numpy()
                 all_scores.append(probs)
@@ -151,6 +153,7 @@ class Trainer:
                 no_improve += 1
             self.scheduler.step()
             if no_improve >= 5:
+                print('Early stopping: no improvement for 5 epochs.')
                 break
         final_eer = self.validate(self.eval_loader, 'eval', self.epochs)
         print(f'Final eval_EER={final_eer*100:.2f}%')

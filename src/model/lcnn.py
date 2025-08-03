@@ -1,5 +1,7 @@
 import torch
 from torch import nn
+import torch.nn.functional as F
+from .angle_linear import AngleLinear
 
 class MFM(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, kernel_size: int, stride: int = 1, padding: int = 0):
@@ -51,16 +53,18 @@ class LCNN(nn.Module):
         self.fc1 = nn.Linear(32, 256)
         self.bn_fc1 = nn.BatchNorm1d(256)
         self.bn_fc2 = nn.BatchNorm1d(128)
-        self.dropout = nn.Dropout(0.5)
-        self.fc2 = nn.Linear(128, num_classes)
+        self.dropout = nn.Dropout(0.75)
+        # self.fc2 = nn.Linear(128, num_classes)
+        self.angle_fc = AngleLinear(128, num_classes, m=3)
+        self.s = 30.0
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, labels: torch.LongTensor = None) -> torch.Tensor:
         if x.shape[1] != 1 or x.shape[2] != 257:
             raise ValueError(f"Expected input shape (B, 1, 257, T), got {x.shape}")
         B, C, F, T = x.shape
         if T != self.TARGET_T:
             if T < self.TARGET_T:
-                x = nn.functional.pad(x, (0, self.TARGET_T - T))
+                x = F.pad(x, (0, self.TARGET_T - T))
             else:
                 x = x[:, :, :, :self.TARGET_T]
         x = self.layer1(x)
@@ -71,11 +75,15 @@ class LCNN(nn.Module):
         x = self.flatten(x)
         x = self.fc1(x)
         x = self.bn_fc1(x)
-        if x.shape[1] != 256:
-            raise ValueError(f"Expected 256 features after fc1, got {x.shape[1]}")
         a, b = x.chunk(2, dim=1)
         x = torch.max(a, b)
         x = self.bn_fc2(x)
         x = self.dropout(x)
-        logits = self.fc2(x)
+        x = F.normalize(x, dim=1)
+        if labels is not None:
+            cos_m_theta = self.angle_fc(x, labels)
+            logits = self.s * cos_m_theta
+        else:
+            cos_t = self.angle_fc(x)
+            logits = self.s * cos_t
         return logits
