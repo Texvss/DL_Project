@@ -1,6 +1,7 @@
 import os
 import numpy as np
 from torch.utils.data import Dataset
+import torch
 
 class ASVSpoofDataset(Dataset):
     def __init__(self, data_dir, protocol_path, split):
@@ -39,10 +40,28 @@ class ASVSpoofDataset(Dataset):
 
     def __getitem__(self, idx):
         path, label = self.items[idx]
-        features = np.load(path)
+        features = np.load(path)  # Загружаем как NumPy
+        features = torch.from_numpy(features).float()  # Преобразуем в тензор
         utt_id = os.path.basename(path).replace('.npy', '')
         return {
             'features': features,
-            'labels':   label,
-            'utt_id':   utt_id
+            'labels': label,
+            'utt_id': utt_id
         }
+
+if __name__ == '__main__':
+    train_cfg = {
+        "train_dir": "/kaggle/input/processed/processed/train",
+        "train_protocol": "/kaggle/input/raw-data/ASVspoof2019_LA_cm_protocols/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt",
+        "dev_dir": "/kaggle/input/processed/processed/dev",
+        "dev_protocol": "/kaggle/input/raw-data/ASVspoof2019_LA_cm_protocols/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt",
+        "eval_dir": "/kaggle/input/processed/processed/eval",
+        "eval_protocol": "/kaggle/input/raw-data/ASVspoof2019_LA_cm_protocols/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt"
+    }
+    for split, dir_path, proto_path in [('train', train_cfg['train_dir'], train_cfg['train_protocol']),
+                                        ('dev', train_cfg['dev_dir'], train_cfg['dev_protocol']),
+                                        ('eval', train_cfg['eval_dir'], train_cfg['eval_protocol'])]:
+        ds = ASVSpoofDataset(dir_path, proto_path, split)
+        labels = [label for _, label in ds.items]
+        counts = np.bincount(labels)
+        print(f"{split.capitalize()}: spoof={counts[0]}, bonafide={counts[1]}")
