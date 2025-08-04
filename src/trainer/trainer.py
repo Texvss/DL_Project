@@ -73,8 +73,8 @@ class Trainer:
         class_weights = self._compute_class_weights(train_config)
         print(f"Class weights: spoof={class_weights[0]:.8f}, bonafide={class_weights[1]:.8f}")
         self.loss = nn.CrossEntropyLoss(weight=class_weights.to(self.device))
-        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-2)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 20))
+        self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-1)  # Увеличен weight_decay
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 10))  # Включен с T_max=10
         self.epochs = run_config['epochs']
 
     def _compute_class_weights(self, cfg):
@@ -82,7 +82,7 @@ class Trainer:
         labels = [label for _, label in ds.items]
         counts = np.bincount(labels)
         weights = 1.0 / counts
-        weights[1] *= 2.0
+        weights[1] *= 3.0
         print(f"Raw counts: spoof={counts[0]}, bonafide={counts[1]}")
         return torch.tensor(weights, dtype=torch.float32)
 
@@ -157,16 +157,17 @@ class Trainer:
                 f"Epoch {epoch}: train_loss={train_loss:.4f}, "
                 f"dev_EER={dev_eer*100:.2f}%, eval_EER={eval_eer*100:.2f}%"
             )
-            if dev_eer < best_eer:
-                best_eer, no_improve = dev_eer, 0
+            if eval_eer < best_eer:
+                best_eer, no_improve = eval_eer, 0
                 torch.save(self.model.state_dict(), self.checkpoint_path)
-                print(f"Saved model to {self.checkpoint_path} with dev_EER={dev_eer*100:.2f}%")
+                print(f"Saved model to {self.checkpoint_path} with eval_EER={eval_eer*100:.2f}%")
             else:
                 no_improve += 1
-            self.scheduler.step()
-            if no_improve >= 6:
-                print("Early stopping")
-                break
+            if self.scheduler:
+                self.scheduler.step()
+            # if no_improve >= 5:
+            #     print("Early stopping")
+            #     break
         final_eer = self.validate(self.eval_loader, 'eval', self.epochs)
         print(f'Final eval_EER={final_eer*100:.2f}%')
 
@@ -182,15 +183,15 @@ if __name__ == '__main__':
     }
 
     run_cfg = {
-        "lr": 1e-4,
-        "epochs": 20,
+        "lr": 5e-5,
+        "epochs": 10,
         "checkpoint_path": "/kaggle/working/checkpoints/best_lcnn.pt",
         "device": "cuda" if torch.cuda.is_available() else "cpu",
         "comet_api_key": os.environ["COMET_API_KEY"],
-        "comet_project": "anti-spoof",
+        "comet_project": "spoofing-detection",
         "comet_workspace": None,
         "num_workers": 4,
-        "T_max": 20
+        "T_max": 10
     }
     trainer = Trainer(train_cfg, run_config=run_cfg)
     trainer.run()

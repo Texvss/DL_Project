@@ -40,8 +40,8 @@ class ASVSpoofDataset(Dataset):
 
     def __getitem__(self, idx):
         path, label = self.items[idx]
-        features = np.load(path)  # Загружаем как NumPy
-        features = torch.from_numpy(features).float()  # Преобразуем в тензор
+        features = np.load(path)
+        features = torch.from_numpy(features).float()
         utt_id = os.path.basename(path).replace('.npy', '')
         return {
             'features': features,
