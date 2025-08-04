@@ -12,7 +12,6 @@ from src.model.lcnn import LCNN
 from src.metrics.calculate_eer import compute_eer
 from sklearn.metrics import accuracy_score
 
-# Подавление ошибок torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
 class Trainer:
@@ -28,7 +27,6 @@ class Trainer:
         )
         self.model = LCNN(num_classes=2).to(self.device)
 
-        # Явное создание папки checkpoints
         checkpoint_dir = "/kaggle/working/checkpoints"
         os.makedirs(checkpoint_dir, exist_ok=True)
         self.checkpoint_path = os.path.join(checkpoint_dir, "best_lcnn.pt")
@@ -76,7 +74,7 @@ class Trainer:
         print(f"Class weights: spoof={class_weights[0]:.8f}, bonafide={class_weights[1]:.8f}")
         self.loss = nn.CrossEntropyLoss(weight=class_weights.to(self.device))
         self.optimizer = torch.optim.Adam(self.model.parameters(), lr=run_config['lr'], weight_decay=1e-2)
-        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 12))
+        self.scheduler = CosineAnnealingLR(self.optimizer, T_max=run_config.get('T_max', 20))
         self.epochs = run_config['epochs']
 
     def _compute_class_weights(self, cfg):
@@ -84,7 +82,7 @@ class Trainer:
         labels = [label for _, label in ds.items]
         counts = np.bincount(labels)
         weights = 1.0 / counts
-        weights[1] *= 2.0  # Значение, давшее eval_EER=8.27%
+        weights[1] *= 2.0
         print(f"Raw counts: spoof={counts[0]}, bonafide={counts[1]}")
         return torch.tensor(weights, dtype=torch.float32)
 
@@ -96,13 +94,6 @@ class Trainer:
         sample_weights = [w[label] for label in labels]
         return WeightedRandomSampler(sample_weights, num_samples=len(sample_weights), replacement=True)
 
-    def mixup_data(self, x, y, alpha=0.2):
-        lam = np.random.beta(alpha, alpha) if alpha > 0 else 1
-        index = torch.randperm(x.size(0)).to(x.device)
-        mixed_x = lam * x + (1 - lam) * x[index]
-        y_a, y_b = y, y[index]
-        return mixed_x, y_a, y_b, lam
-
     def train_one_epoch(self, epoch: int) -> float:
         start_time = time.time()
         self.model.train()
@@ -112,15 +103,9 @@ class Trainer:
         for batch_idx, batch in enumerate(self.train_loader, 1):
             feats = batch['features'].to(self.device)
             labels = batch['labels'].to(self.device)
-            if torch.rand(1) < 0.5:  # Mixup с вероятностью 50%
-                feats, labels_a, labels_b, lam = self.mixup_data(feats, labels, alpha=0.2)
-                self.optimizer.zero_grad()
-                logits = self.model(feats)
-                loss = lam * self.loss(logits, labels_a) + (1 - lam) * self.loss(logits, labels_b)
-            else:
-                self.optimizer.zero_grad()
-                logits = self.model(feats)
-                loss = self.loss(logits, labels)
+            self.optimizer.zero_grad()
+            logits = self.model(feats)
+            loss = self.loss(logits, labels)
             loss.backward()
             grad_norm = torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
             self.optimizer.step()
@@ -158,8 +143,8 @@ class Trainer:
         spoof = y_scores[y_true == 0]
         eer, _ = compute_eer(bona, spoof)
         accuracy = accuracy_score(y_true, (y_scores > 0.5).astype(int))
-        self.experiment.log_metric(f'{split}_EER', eer * 100, step=epoch)  # В процентах
-        self.experiment.log_metric(f'{split}_accuracy', accuracy * 100, step=epoch)  # В процентах
+        self.experiment.log_metric(f'{split}_EER', eer * 100, step=epoch)
+        self.experiment.log_metric(f'{split}_accuracy', accuracy * 100, step=epoch)
         return eer
 
     def run(self):
@@ -193,11 +178,11 @@ if __name__ == '__main__':
         "dev_protocol":   "/kaggle/input/raw-data/ASVspoof2019_LA_cm_protocols/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt",
         "eval_dir":       "/kaggle/input/processed/processed/eval",
         "eval_protocol":  "/kaggle/input/raw-data/ASVspoof2019_LA_cm_protocols/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt",
-        "batch_size": 32
+        "batch_size": 64
     }
 
     run_cfg = {
-        "lr": 5e-5,
+        "lr": 1e-4,
         "epochs": 20,
         "checkpoint_path": "/kaggle/working/checkpoints/best_lcnn.pt",
         "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -205,7 +190,7 @@ if __name__ == '__main__':
         "comet_project": "anti-spoof",
         "comet_workspace": None,
         "num_workers": 4,
-        "T_max": 12
+        "T_max": 20
     }
     trainer = Trainer(train_cfg, run_config=run_cfg)
     trainer.run()

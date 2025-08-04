@@ -6,31 +6,33 @@ class ASVSpoofDataset(Dataset):
     def __init__(self, data_dir, protocol_path, split):
         self.data_dir = data_dir
         self.items = []
+        seen_utt_ids = set()
+
+        protocol_labels = {}
         with open(protocol_path, 'r', encoding='utf-8') as f:
-            for line in f:
+            for line_idx, line in enumerate(f):
                 parts = line.strip().split()
                 if len(parts) < 2:
                     continue
                 utt_id = parts[1]
                 label = parts[-1]
-                if split == 'train' and 'trn' in protocol_path:
-                    if label in ['bonafide', 'spoof']:
-                        self.items.append((
-                            os.path.join(data_dir, f"{utt_id}.npy"),
-                            1 if label == 'bonafide' else 0
-                        ))
-                elif split == 'dev' and 'dev' in protocol_path:
-                    if label in ['bonafide', 'spoof']:
-                        self.items.append((
-                            os.path.join(data_dir, f"{utt_id}.npy"),
-                            1 if label == 'bonafide' else 0
-                        ))
-                elif split == 'eval' and 'eval' in protocol_path:
-                    if label in ['bonafide', 'spoof']:
-                        self.items.append((
-                            os.path.join(data_dir, f"{utt_id}.npy"),
-                            1 if label == 'bonafide' else 0
-                        ))
+                if label in ['bonafide', 'spoof']:
+                    protocol_labels[utt_id] = 1 if label == 'bonafide' else 0
+
+        for filename in os.listdir(data_dir):
+            if not filename.endswith('.npy'):
+                continue
+            utt_id = filename.replace('.npy', '')
+            file_path = os.path.join(data_dir, filename)
+            if utt_id in protocol_labels:
+                if utt_id not in seen_utt_ids:
+                    self.items.append((file_path, protocol_labels[utt_id]))
+                    seen_utt_ids.add(utt_id)
+            else:
+                print(f"Extra file: {utt_id} - Assigning default label (spoof=0)")
+                self.items.append((file_path, 0))
+
+        print(f"Loaded {len(self.items)} items for {split}")
 
     def __len__(self):
         return len(self.items)

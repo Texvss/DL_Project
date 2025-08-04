@@ -72,9 +72,9 @@ class LCNN(nn.Module):
         x = self.flatten(x)
         x = self.fc1(x)
         x = self.bn_fc1(x)
+        x = self.dropout(x) 
         a, b = x.chunk(2, dim=1)
         x = torch.max(a, b)
         x = self.bn_fc2(x)
-        x = self.dropout(x)
         logits = self.fc2(x)
         return logits
