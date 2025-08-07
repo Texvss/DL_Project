@@ -1,0 +1,7 @@
+_target_: src.utils.preprocess.split_process
+stats_file: "global_stats.pkl"
+target_t: 600
+n_fft: 1724
+hop_sec: 0.0081
+win_length: 1724
+sample_rate: 16000

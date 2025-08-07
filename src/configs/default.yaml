@@ -1,0 +1,11 @@
+defaults:
+  - _self_
+  - dataloader@main
+  - dataset@asvspoof
+  - model@main
+  - preprocess@main
+  - training@main
+  # - writer@cometml
+
+seed: 42
+verbose: true

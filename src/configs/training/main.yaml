@@ -1,0 +1,9 @@
+_target_: src.trainer.Trainer
+lr: 0.00005
+epochs: 10
+device: "cuda"
+checkpoint_path: "/kaggle/working/checkpoints/best_lcnn.pt"
+T_max: 10
+weight_decay: 0.1
+grad_clip_norm: 5.0
+shuffle: true

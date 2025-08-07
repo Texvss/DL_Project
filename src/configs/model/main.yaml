@@ -1,0 +1,3 @@
+_target_: src.model.LCNN
+num_classes: 2
+target_t: ${preprocessing.target_t

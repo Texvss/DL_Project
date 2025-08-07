@@ -1,0 +1,4 @@
+_target_: src.logger.CometMLWriter
+comet_api_key: "${COMET_API_KEY}"
+comet_project: "spoofing-detection"
+comet_workspace: null

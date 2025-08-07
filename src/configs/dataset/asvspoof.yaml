@@ -1,0 +1,11 @@
+_target_: data.datasets.ASVSpoofDataset
+train:
+  dir: "/kaggle/input/processed/processed/train"
+  protocol: "/kaggle/input/raw-data/ASVspoof2019_LA_cm_protocols/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.train.trn.txt"
+dev:
+  dir: "/kaggle/input/processed/processed/dev"
+  protocol: "/kaggle/input/raw-data/ASVspoof2019_LA_cm_protocols/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.dev.trl.txt"
+eval:
+  dir: "/kaggle/input/processed/processed/eval"
+  protocol: "/kaggle/input/raw-data/ASVspoof2019_LA_cm_protocols/ASVspoof2019_LA_cm_protocols/ASVspoof2019.LA.cm.eval.trl.txt"
+target_t: ${preprocessing.target_t}
