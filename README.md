@@ -6,30 +6,11 @@ This repository implements an LCNN-based countermeasure for spoofing detection o
 
 ## Contents
 
-- [Project Structure](#project-structure)  
 - [Installation](#installation)  
 - [Configuration](#configuration)  
 - [Training](#training)  
 - [Inference](#inference)  
 - [Evaluation](#evaluation)
-
-## Project Structure
-
-├── train.py # Launch training using Hydra configs
-├── inference.py # Run inference and write CSV with scores
-├── grading.py # Automated grading of student CSVs
-├── requirements.txt # Project dependencies
-├── global_stats.pkl # (Optional) pre-computed global statistics
-├── students_solutions/ # Folder for student CSV submissions
-├── src/ # Core source code
-│ ├── configs/ # Hydra configs (default.yaml, etc.)
-│ ├── datasets/ # ASVspoof dataset logic
-│ ├── model/ # LCNN architecture
-│ ├── metrics/ # EER and t-DCF calculations
-│ ├── trainer/ # Trainer class (training loop, validation)
-│ └── logger/ # CometML integration
-├── .flake8 # Linting rules
-└── .pre-commit-config.yaml # Pre-commit hook settings
 
 
 ## Installation
